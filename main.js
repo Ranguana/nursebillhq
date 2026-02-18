@@ -51,12 +51,12 @@ function startStaticServer() {
         res.writeHead(403); res.end('Forbidden'); return;
       }
 
-      // SPA fallback — any unknown path serves index.html (React Router handles it)
+      // SPA fallback — unknown paths serve app.html (the React entry)
       try {
         const stat = fs.statSync(filePath);
-        if (stat.isDirectory()) filePath = path.join(distPath, 'index.html');
+        if (stat.isDirectory()) filePath = path.join(distPath, 'app.html');
       } catch {
-        filePath = path.join(distPath, 'index.html');
+        filePath = path.join(distPath, 'app.html');
       }
 
       const ext = path.extname(filePath).toLowerCase();
@@ -104,13 +104,13 @@ function createWindow() {
     },
   });
 
-  // In dev mode load from Vite dev server; in production use local static server
-  // Both use http://localhost:17839 so Google OAuth works in both modes
+  // app.html is the Electron/React entry — index.html is the Vercel marketing page
+  // Both dev and prod use http://localhost:17839 so Google OAuth works in both
   if (process.argv.includes('--dev')) {
-    mainWindow.loadURL(`http://localhost:${PROD_PORT}`);
+    mainWindow.loadURL(`http://localhost:${PROD_PORT}/app.html`);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadURL(`http://localhost:${PROD_PORT}`);
+    mainWindow.loadURL(`http://localhost:${PROD_PORT}/app.html`);
   }
 
   mainWindow.on('closed', () => {

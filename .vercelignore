@@ -1,0 +1,11 @@
+node_modules/
+dist/
+src/
+app.html
+main.js
+preload.js
+dashboard.jsx
+vite.config.js
+package.json
+package-lock.json
+.gitignore

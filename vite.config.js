@@ -15,6 +15,9 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      input: './app.html',  // Electron app entry — index.html is the Vercel marketing page
+    },
   },
   test: {
     environment: 'jsdom',
