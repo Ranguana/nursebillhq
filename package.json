@@ -1,0 +1,50 @@
+{
+  "name": "nursebill",
+  "version": "1.0.0",
+  "description": "NurseBill — Expert Billing Dashboard for Criminal Defense Nurse Consultants",
+  "main": "main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:17839 && electron . --dev\"",
+    "build": "vite build && electron-builder --mac",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "author": "NurseBill",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.4.2",
+    "@testing-library/react": "^14.3.1",
+    "@testing-library/user-event": "^14.5.2",
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.0",
+    "jsdom": "^24.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.0",
+    "vitest": "^1.6.0",
+    "wait-on": "^7.2.0",
+    "xlsx": "^0.18.5"
+  },
+  "build": {
+    "appId": "com.nursebill.app",
+    "productName": "NurseBill",
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.business",
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "icon": "public/logo.png"
+    },
+    "files": [
+      "dist/**/*",
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "main.js"
+    }
+  }
+}

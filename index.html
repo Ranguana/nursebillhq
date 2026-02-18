@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; font-src https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://accounts.google.com; connect-src 'self' https://www.googleapis.com https://accounts.google.com; frame-src https://accounts.google.com;">
+  <title>NurseBill</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet">
+  <style>
+    /* Mac-native feel: draggable title bar area */
+    .titlebar-drag {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 38px;
+      -webkit-app-region: drag;
+      z-index: 9999;
+      pointer-events: none;
+    }
+    /* Make sidebar buttons clickable through the drag region */
+    .sidebar { -webkit-app-region: no-drag; }
+    .sidebar-brand { padding-top: 42px !important; } /* Space for traffic lights */
+  </style>
+</head>
+<body>
+  <!-- Invisible drag area for native Mac window dragging -->
+  <div class="titlebar-drag"></div>
+  
+  <!-- App root — the React dashboard renders here -->
+  <div id="root"></div>
+
+  <script>
+    /**
+     * ELECTRON API BRIDGE
+     * 
+     * This script checks if we're running in Electron or a regular browser.
+     * If Electron: window.electronAPI is available (from preload.js)
+     * If browser: we create a mock version so the dashboard still works
+     * 
+     * This means you can develop in a browser and it still works!
+     */
+    if (!window.electronAPI) {
+      console.log('Running in browser mode (no Electron). File operations will be simulated.');
+      
+      // Mock file system for browser development
+      window.electronAPI = {
+        readFolderTree: async () => ({
+          rootPath: '~/Desktop/NurseBill Cases',
+          lawyers: [
+            {
+              name: 'Anderson, Karen',
+              path: '~/Desktop/NurseBill Cases/Anderson, Karen',
+              files: [],
+              clients: [
+                { name: 'Thompson, David', path: '~/Desktop/NurseBill Cases/Anderson, Karen/Thompson, David', files: [
+                  { name: 'Toxicology_Report_2026.pdf', path: '~/...pdf', size: 2516582, modified: '2026-02-15T10:00:00Z', created: '2026-02-15T10:00:00Z', extension: 'pdf' },
+                  { name: 'Blood_Draw_Photos.jpg', path: '~/...jpg', size: 8493465, modified: '2026-02-14T14:00:00Z', created: '2026-02-14T14:00:00Z', extension: 'jpg' },
+                ]},
+                { name: 'Reyes, Sofia', path: '~/Desktop/NurseBill Cases/Anderson, Karen/Reyes, Sofia', files: [
+                  { name: 'Chain_of_Custody_Analysis.pdf', path: '~/...pdf', size: 1887436, modified: '2026-02-13T16:00:00Z', created: '2026-02-13T16:00:00Z', extension: 'pdf' },
+                ]},
+              ]
+            },
+            {
+              name: 'Chen, Robert',
+              path: '~/Desktop/NurseBill Cases/Chen, Robert',
+              files: [],
+              clients: [
+                { name: 'Patel, Anita', path: '~/Desktop/NurseBill Cases/Chen, Robert/Patel, Anita', files: [
+                  { name: 'Competency_Assessment.pdf', path: '~/...pdf', size: 3355443, modified: '2026-02-16T09:30:00Z', created: '2026-02-16T09:30:00Z', extension: 'pdf' },
+                  { name: 'Medical_Records_Review.docx', path: '~/...docx', size: 911360, modified: '2026-02-16T09:30:00Z', created: '2026-02-16T09:30:00Z', extension: 'docx' },
+                ]},
+              ]
+            },
+            {
+              name: 'Diaz, Maria',
+              path: '~/Desktop/NurseBill Cases/Diaz, Maria',
+              files: [],
+              clients: [
+                { name: "O'Brien, Sean", path: "~/Desktop/NurseBill Cases/Diaz, Maria/O'Brien, Sean", files: [
+                  { name: 'ER_Records_Comparison.xlsx', path: '~/...xlsx', size: 467148, modified: '2026-02-15T08:44:00Z', created: '2026-02-15T08:44:00Z', extension: 'xlsx' },
+                ]},
+              ]
+            },
+            {
+              name: 'Franklin, James',
+              path: '~/Desktop/NurseBill Cases/Franklin, James',
+              files: [],
+              clients: [
+                { name: 'Nguyen, Tran', path: '~/Desktop/NurseBill Cases/Franklin, James/Nguyen, Tran', files: [
+                  { name: 'Booking_Medical_Report.pdf', path: '~/...pdf', size: 1572864, modified: '2026-02-17T11:00:00Z', created: '2026-02-17T11:00:00Z', extension: 'pdf' },
+                ]},
+              ]
+            },
+            {
+              name: 'Gupta, Priya',
+              path: '~/Desktop/NurseBill Cases/Gupta, Priya',
+              files: [],
+              clients: [
+                { name: 'Garcia, Rosa', path: '~/Desktop/NurseBill Cases/Gupta, Priya/Garcia, Rosa', files: [
+                  { name: 'Federal_Case_Summary.pdf', path: '~/...pdf', size: 5976883, modified: '2026-02-16T09:00:00Z', created: '2026-02-16T09:00:00Z', extension: 'pdf' },
+                ]},
+              ]
+            },
+          ],
+        }),
+        createLawyerFolder: async (name) => { console.log('Would create folder:', name); return `~/Desktop/NurseBill Cases/${name}`; },
+        createClientFolder: async (lawyer, client) => { console.log('Would create folder:', lawyer, client); return `~/Desktop/NurseBill Cases/${lawyer}/${client}`; },
+        getRootPath: async () => '~/Desktop/NurseBill Cases',
+        getFiles: async () => [],
+        copyToCase: async (src, lawyer, client) => { console.log('Would copy:', src, '→', lawyer, client); return src; },
+        moveToCase: async (src, lawyer, client) => { console.log('Would move:', src, '→', lawyer, client); return src; },
+        trashFile: async (path) => { console.log('Would trash:', path); return true; },
+        renameFile: async (old, name) => { console.log('Would rename:', old, '→', name); return old; },
+        openFile: async (path) => { console.log('Would open:', path); },
+        openInFinder: async (path) => { console.log('Would open in Finder:', path); },
+        pickFiles: async () => { console.log('Would show file picker'); return []; },
+        pickFolder: async () => { console.log('Would show folder picker'); return null; },
+        setRootPath: async (p) => { console.log('Would set root path:', p); return p; },
+        saveFile: async () => { console.log('Would show save dialog'); return null; },
+        isElectron: async () => false,
+        getVersion: async () => '1.0.0 (browser)',
+        onFolderChange: () => {},
+        onRefreshHint: () => {},
+        removeAllListeners: () => {},
+      };
+    }
+  </script>
+
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
