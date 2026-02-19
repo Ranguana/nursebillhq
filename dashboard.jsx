@@ -33,13 +33,24 @@ const Icons = {
   Cloud: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>,
 };
 
-// ─── Sample Data ─────────────────────────────────────────────────────────────
-// ─── Billing Source ("Workbook") — mirrors Jennifer's 3 Excel files ─────────
-const BILLING_SOURCES = [
-  { id: "las", label: "LAS / Harlem", prefix: "H", description: "Legal Aid Society — Harlem Office" },
-  { id: "fla", label: "Florida", prefix: "FLA", description: "Florida Public Defenders — Miami & Jacksonville" },
-  { id: "ind", label: "Individuals", prefix: "", description: "Private attorneys & out-of-state PDs" },
+// ─── Billing Source defaults ──────────────────────────────────────────────────
+const DEFAULT_BILLING_SOURCES = [
+  { id: "grp1", label: "Billing Group 1", prefix: "G1", description: "", filenameMatch: "" },
+  { id: "grp2", label: "Billing Group 2", prefix: "G2", description: "", filenameMatch: "" },
+  { id: "ind",  label: "Individual",      prefix: "",   description: "", filenameMatch: "" },
 ];
+
+const SOURCE_PALETTE = [
+  { bg: "#ede9fe", text: "#7c3aed" },
+  { bg: "#e0f2fe", text: "#0284c7" },
+  { bg: "#fff3e0", text: "#e65100" },
+  { bg: "#f0fdf4", text: "#16a34a" },
+  { bg: "#fce7f3", text: "#db2777" },
+];
+const sourceColor = (sourceId, sources) => {
+  const idx = sources.findIndex((s) => s.id === sourceId);
+  return SOURCE_PALETTE[Math.max(0, idx) % SOURCE_PALETTE.length];
+};
 
 
 const COUNTIES = ["New York", "Bronx", "Queens", "Kings", "Richmond", "Miami-Dade", "Duval", "Norfolk", "Aroostook"];
@@ -1666,7 +1677,7 @@ function Toast({ message, type = "success", onClose }) {
 }
 
 // ─── Cases Tab ───────────────────────────────────────────────────────────────
-function CasesTab({ clients, lawyers, onSelectCase, onUpdateClient, searchTerm, setSearchTerm }) {
+function CasesTab({ clients, lawyers, onSelectCase, onUpdateClient, searchTerm, setSearchTerm, billingSources }) {
   const [filterLawyer, setFilterLawyer] = useState("all");
   const [filterCounty, setFilterCounty] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -1751,9 +1762,9 @@ function CasesTab({ clients, lawyers, onSelectCase, onUpdateClient, searchTerm, 
   // Counts per source
   const sourceCounts = useMemo(() => {
     const counts = { all: clients.length };
-    BILLING_SOURCES.forEach((s) => { counts[s.id] = clients.filter((c) => c.source === s.id).length; });
+    billingSources.forEach((s) => { counts[s.id] = clients.filter((c) => c.source === s.id).length; });
     return counts;
-  }, [clients]);
+  }, [clients, billingSources]);
 
   // Status counts for current source
   const statusCounts = useMemo(() => {
@@ -1768,7 +1779,7 @@ function CasesTab({ clients, lawyers, onSelectCase, onUpdateClient, searchTerm, 
 
   return (
     <>
-      {/* Billing Source Tabs — mirrors her 3 Excel workbooks */}
+      {/* Billing Source Tabs */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button
           className={`btn btn-sm ${filterSource === "all" ? "" : "btn-secondary"}`}
@@ -1777,7 +1788,7 @@ function CasesTab({ clients, lawyers, onSelectCase, onUpdateClient, searchTerm, 
         >
           All Cases <span style={{ opacity: 0.7, fontSize: 11, marginLeft: 4 }}>{sourceCounts.all}</span>
         </button>
-        {BILLING_SOURCES.map((s) => (
+        {billingSources.map((s) => (
           <button
             key={s.id}
             className={`btn btn-sm ${filterSource === s.id ? "" : "btn-secondary"}`}
@@ -2414,7 +2425,7 @@ function CaseDetail({ client, lawyer, emails, events, onBack, onGenerateInvoice,
 }
 
 // ─── Settings Tab ────────────────────────────────────────────────────────────
-function SettingsTab({ dashboardName, setDashboardName, clients, lawyers, onClearAll, syncFolder, onChangeSyncFolder, gcal, gmailClientId }) {
+function SettingsTab({ dashboardName, setDashboardName, clients, lawyers, onClearAll, syncFolder, onChangeSyncFolder, gcal, gmailClientId, billingSources, setBillingSources }) {
   const [nameInput, setNameInput] = useState(dashboardName);
   const [clearConfirm, setClearConfirm] = useState(false);
   const [folderLoading, setFolderLoading] = useState(false);
@@ -2437,6 +2448,8 @@ function SettingsTab({ dashboardName, setDashboardName, clients, lawyers, onClea
     }
     setFolderLoading(false);
   };
+
+  const inputStyle = { fontSize: 13, padding: "7px 10px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--surface)", color: "var(--text-primary)", width: "100%" };
 
   const sectionStyle = {
     background: "var(--surface-raised)",
@@ -2523,6 +2536,57 @@ function SettingsTab({ dashboardName, setDashboardName, clients, lawyers, onClea
         <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
           NurseBill watches this folder for case files. Change it to any folder on your computer.
         </p>
+      </div>
+
+      {/* Billing Sources */}
+      <div style={sectionStyle}>
+        <h3 style={{ fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Billing Sources</h3>
+        <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 16 }}>
+          These appear as filter tabs on the Cases page. Set a <strong>Filename Keyword</strong> so NurseBill can auto-detect which source an Excel file belongs to when importing.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 130px 32px", gap: 8, alignItems: "center", marginBottom: 6 }}>
+          {["Label", "Invoice Prefix", "Filename Keyword", ""].map((h) => (
+            <span key={h} style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)" }}>{h}</span>
+          ))}
+        </div>
+        {billingSources.map((src, idx) => (
+          <div key={src.id} style={{ display: "grid", gridTemplateColumns: "1fr 80px 130px 32px", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <input
+              value={src.label}
+              onChange={(e) => setBillingSources((prev) => prev.map((s, i) => i === idx ? { ...s, label: e.target.value } : s))}
+              style={inputStyle}
+              placeholder="Label"
+            />
+            <input
+              value={src.prefix}
+              onChange={(e) => setBillingSources((prev) => prev.map((s, i) => i === idx ? { ...s, prefix: e.target.value } : s))}
+              style={inputStyle}
+              placeholder="e.g. H"
+            />
+            <input
+              value={src.filenameMatch || ""}
+              onChange={(e) => setBillingSources((prev) => prev.map((s, i) => i === idx ? { ...s, filenameMatch: e.target.value } : s))}
+              style={inputStyle}
+              placeholder="e.g. LAS"
+            />
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => billingSources.length > 1 && setBillingSources((prev) => prev.filter((_, i) => i !== idx))}
+              disabled={billingSources.length <= 1}
+              title="Remove source"
+              style={{ opacity: billingSources.length <= 1 ? 0.3 : 1, padding: "6px 8px" }}
+            >
+              <Icons.Trash />
+            </button>
+          </div>
+        ))}
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => setBillingSources((prev) => [...prev, { id: `src${Date.now()}`, label: "", prefix: "", description: "", filenameMatch: "" }])}
+          style={{ marginTop: 4 }}
+        >
+          + Add Source
+        </button>
       </div>
 
       {/* Data */}
@@ -3911,11 +3975,8 @@ function InvoiceTab({ clients, lawyers, events, emails, preselectedClient, gmail
   );
 }
 
-// ─── Main App ────────────────────────────────────────────────────────────────
 // ─── Import Data Tab ────────────────────────────────────────────────────────
-// Reads Jennifer's Excel workbooks and maps them to app data
-// Supports: LAS_BILLING, FL_BILLING, BILLING_INDIVIDUALS
-function ImportTab({ onImportComplete, importStats, currentClientCount }) {
+function ImportTab({ onImportComplete, importStats, currentClientCount, billingSources }) {
   const [files, setFiles] = useState([]);
   const [importing, setImporting] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -3923,18 +3984,18 @@ function ImportTab({ onImportComplete, importStats, currentClientCount }) {
   const [clearExisting, setClearExisting] = useState(false);
   const [parsedRows, setParsedRows] = useState([]);
 
-  // Detect which billing source a file belongs to based on filename
+  // Detect which billing source a file belongs to based on filename keywords
   const detectSource = (filename) => {
     const fn = filename.toUpperCase();
-    if (fn.includes("LAS")) return "las";
-    if (fn.includes("FL") || fn.includes("FLORIDA")) return "fla";
-    if (fn.includes("INDIVIDUAL")) return "ind";
-    return "ind"; // default
+    for (const s of billingSources) {
+      if (s.filenameMatch && fn.includes(s.filenameMatch.toUpperCase())) return s.id;
+    }
+    return billingSources[billingSources.length - 1]?.id || "ind";
   };
 
   // Detect source label
   const sourceLabel = (source) => {
-    return BILLING_SOURCES.find((s) => s.id === source)?.label || "Unknown";
+    return billingSources.find((s) => s.id === source)?.label || "Unknown";
   };
 
   // Pick files (Electron native dialog or browser file input)
@@ -4167,11 +4228,9 @@ function ImportTab({ onImportComplete, importStats, currentClientCount }) {
     let clientId = 1;
     let lawyerId = 1;
 
-    // Determine law firm from source
+    // Determine law firm label from source
     const firmForSource = (source) => {
-      if (source === "las") return "Legal Aid Society";
-      if (source === "fla") return "Office of the Public Defender — Florida";
-      return "Private/Individual";
+      return billingSources.find((s) => s.id === source)?.description || billingSources.find((s) => s.id === source)?.label || source;
     };
 
     for (const row of parsedRows) {
@@ -4251,7 +4310,7 @@ function ImportTab({ onImportComplete, importStats, currentClientCount }) {
           Import Your Excel Billing Data
         </h3>
         <p style={{ fontSize: 13, opacity: 0.85, lineHeight: 1.6 }}>
-          Drop in your existing billing spreadsheets and NurseBill will read every sheet, map columns automatically, and import all your cases. Supports your three workbooks: LAS Billing, Florida Billing, and Individual Billing.
+          Drop in your existing billing spreadsheets and NurseBill will read every sheet, map columns automatically, and import all your cases. Configure your billing sources in Settings to enable automatic file detection.
         </p>
       </div>
 
@@ -4261,7 +4320,7 @@ function ImportTab({ onImportComplete, importStats, currentClientCount }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
           {[
             { step: "1", title: "Select Files", desc: "Pick your .xlsx billing files from your Mac" },
-            { step: "2", title: "Auto-Detect", desc: "NurseBill identifies LAS, Florida, or Individual format" },
+            { step: "2", title: "Auto-Detect", desc: "NurseBill matches the file to a billing source using the filename keywords you configure in Settings" },
             { step: "3", title: "Map Columns", desc: "Matches Invoice, Attorney, Client, Rate, etc. automatically" },
             { step: "4", title: "Import", desc: "All years & sheets imported. Skips empty rows and headers." },
           ].map((s) => (
@@ -4300,10 +4359,7 @@ function ImportTab({ onImportComplete, importStats, currentClientCount }) {
                   <div style={{ fontWeight: 500, fontSize: 13 }}>{f.name}</div>
                   <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{formatBytes(f.size)}</div>
                 </div>
-                <span className="badge" style={{
-                  background: f.source === "las" ? "#e8f5e9" : f.source === "fla" ? "#e3f2fd" : "#fff3e0",
-                  color: f.source === "las" ? "#2e7d32" : f.source === "fla" ? "#1565c0" : "#e65100",
-                }}>
+                <span className="badge" style={sourceColor(f.source, billingSources)}>
                   {sourceLabel(f.source)}
                 </span>
                 <select
@@ -4312,7 +4368,7 @@ function ImportTab({ onImportComplete, importStats, currentClientCount }) {
                   className="filter-select"
                   style={{ width: "auto", minWidth: 120 }}
                 >
-                  {BILLING_SOURCES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  {billingSources.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
                 </select>
                 <button className="btn btn-ghost btn-sm" onClick={() => setFiles((prev) => prev.filter((_, pi) => pi !== i))}>
                   <Icons.Trash />
@@ -4323,7 +4379,7 @@ function ImportTab({ onImportComplete, importStats, currentClientCount }) {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
                 <input type="checkbox" checked={clearExisting} onChange={(e) => setClearExisting(e.target.checked)} style={{ accentColor: "var(--accent)" }} />
-                Clear sample data before importing (recommended)
+                Clear existing data before importing
               </label>
               <button className="btn btn-primary" onClick={handleImport} disabled={importing}>
                 {importing ? "Reading files..." : `Scan ${files.length} File${files.length !== 1 ? "s" : ""}`}
@@ -4495,12 +4551,22 @@ export default function App() {
   const [events, setEvents] = useState([]);
   const [importStats, setImportStats] = useState(null);
   const [gmailClientId, setGmailClientId] = useState(GMAIL_CLIENT_ID);
-  const [dashboardName, setDashboardName] = useState("Jennifer Grossman BSN, RN, LNC");
+  const [dashboardName, setDashboardName] = useState(() => localStorage.getItem("nursebill_name") || "");
   const [syncFolder, setSyncFolder] = useState("");
+  const [billingSources, setBillingSources] = useState(() => {
+    try {
+      const saved = localStorage.getItem("nursebill_billing_sources");
+      return saved ? JSON.parse(saved) : DEFAULT_BILLING_SOURCES;
+    } catch { return DEFAULT_BILLING_SOURCES; }
+  });
   const gmail = useGmail();
   const gcal  = useGoogleCalendar();
 
   const showToast = (msg, type = "success") => setToast({ msg, type });
+
+  // Persist settings to localStorage
+  useEffect(() => { try { localStorage.setItem("nursebill_name", dashboardName); } catch {} }, [dashboardName]);
+  useEffect(() => { try { localStorage.setItem("nursebill_billing_sources", JSON.stringify(billingSources)); } catch {} }, [billingSources]);
 
   // ─── Google Calendar two-way poll ─────────────────────────────────────────
   // Runs every 5 minutes and on window focus. Applies any changes made in
@@ -4741,6 +4807,7 @@ export default function App() {
                 onUpdateClient={handleUpdateClient}
                 searchTerm={searchTerm}
                 setSearchTerm={setSearchTerm}
+                billingSources={billingSources}
               />
             )}
             {activeTab === "cases" && selectedCase && (
@@ -4785,6 +4852,7 @@ export default function App() {
                 onImportComplete={handleImportComplete}
                 importStats={importStats}
                 currentClientCount={clients.length}
+                billingSources={billingSources}
               />
             )}
             {activeTab === "settings" && (
@@ -4798,6 +4866,8 @@ export default function App() {
                 onChangeSyncFolder={setSyncFolder}
                 gcal={gcal}
                 gmailClientId={gmailClientId}
+                billingSources={billingSources}
+                setBillingSources={setBillingSources}
               />
             )}
           </div>
