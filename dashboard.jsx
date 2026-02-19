@@ -41,18 +41,6 @@ const BILLING_SOURCES = [
   { id: "ind", label: "Individuals", prefix: "", description: "Private attorneys & out-of-state PDs" },
 ];
 
-const SAMPLE_LAWYERS = [
-  { id: "l1", name: "Wang, Christine", firm: "Legal Aid Society — Harlem", email: "cwang@legal-aid.org", phone: "(212) 577-3300", source: "las" },
-  { id: "l2", name: "Karpatkin, Judith", firm: "Legal Aid Society — Harlem", email: "jkarpatkin@legal-aid.org", phone: "(212) 577-3300", source: "las" },
-  { id: "l3", name: "Lewis, Allison", firm: "Legal Aid Society — Harlem", email: "alewis@legal-aid.org", phone: "(212) 577-3300", source: "las" },
-  { id: "l4", name: "Raftery, Sara", firm: "Legal Aid Society — Harlem", email: "sraftery@legal-aid.org", phone: "(212) 577-3300", source: "las" },
-  { id: "l5", name: "Collazo, Katrina", firm: "Miami-Dade Public Defender", email: "experts@pdmiami.com", phone: "(305) 545-1600", source: "fla", city: "Miami" },
-  { id: "l6", name: "Campbell, Rachel", firm: "Miami-Dade Public Defender", email: "experts@pdmiami.com", phone: "(305) 545-1600", source: "fla", city: "Miami" },
-  { id: "l7", name: "Willis, Kendra", firm: "Office of the Public Defender — Jacksonville", email: "admin@pd4.coj.net", phone: "(904) 255-4684", source: "fla", city: "Jacksonville" },
-  { id: "l8", name: "Myers, Alyssa", firm: "Norfolk Public Defender", email: "amyers@norfolk-pd.gov", phone: "", source: "ind" },
-  { id: "l9", name: "Hupert, Daniel", firm: "Private Practice", email: "dhupertesq@aol.com", phone: "917-816-5310", source: "ind", address: "30 Wall Street, 8th Floor, New York, N.Y. 10005" },
-  { id: "l10", name: "Genzlinger, Emily", firm: "Maine Public Defender", email: "", phone: "", source: "ind" },
-];
 
 const COUNTIES = ["New York", "Bronx", "Queens", "Kings", "Richmond", "Miami-Dade", "Duval", "Norfolk", "Aroostook"];
 
@@ -62,41 +50,6 @@ const SERVICE_TYPES = ["Review of medical records and verbal report", "Review of
 
 const CASE_STATUSES = ["Consult Scheduled", "Intake", "Need Docs", "Needs Attention", "Completed", "Send Info to Attorney", "Need to Invoice", "Invoice Sent", "Invoice Paid", "Closed"];
 
-const SAMPLE_CLIENTS = [
-  { id: "c1", name: "Lancaster, Trevor", lawyerId: "l1", county: "New York", caseType: "Assault / Battery", status: "Billed", dateOpened: "2025-10-27", balance: 0, caseNumber: "IND-70829-25", court: "NY Supreme Court", nextHearing: null, mitigationSpecialist: "", invoiceNo: "H001", source: "las", rate: 300, unit: 3, total: 900, proBono: 0, totalBilled: 900, datePaid: null, product: "Review of medical records and verbal report", outcome: "" },
-  { id: "c2", name: "Huseinovic, Edin", lawyerId: "l2", county: "New York", caseType: "Drug Offense", status: "Billed", dateOpened: "2025-11-18", balance: 0, caseNumber: "IND-73929-25", court: "NY Supreme Court", nextHearing: null, mitigationSpecialist: "", invoiceNo: "H001", source: "las", rate: 300, unit: "min", total: 600, proBono: 0, totalBilled: 600, datePaid: null, product: "Review of medical records and verbal report", outcome: "" },
-  { id: "c3", name: "Barr, William", lawyerId: "l3", county: "New York", caseType: "Weapons Charge", status: "Billed", dateOpened: "2025-02-07", balance: 0, caseNumber: "75222/2022", court: "NY Supreme Court", nextHearing: null, mitigationSpecialist: "", invoiceNo: "H002", source: "las", rate: 300, unit: 7, total: 2100, proBono: 0, totalBilled: 2100, datePaid: null, product: "Review of extensive medical records and verbal report", outcome: "charges dropped" },
-  { id: "c4", name: "Karrara, Mohammed", lawyerId: "l3", county: "New York", caseType: "Assault / Battery", status: "Billed", dateOpened: "2025-12-07", balance: 0, caseNumber: "71398-20205", court: "NY Supreme Court", nextHearing: null, mitigationSpecialist: "", invoiceNo: "H002", source: "las", rate: 300, unit: 6, total: 1800, proBono: 0, totalBilled: 1800, datePaid: null, product: "Review of medical records and written report", outcome: "" },
-  { id: "c5", name: "Yan, Boafa", lawyerId: "l4", county: "New York", caseType: "Homicide / Manslaughter", status: "Active", dateOpened: "2025-01-15", balance: 0, caseNumber: "IND-73210-25/001", court: "NY Supreme Court", nextHearing: "2026-03-15", mitigationSpecialist: "", invoiceNo: "H003", source: "las", rate: 300, unit: null, total: null, proBono: null, totalBilled: null, datePaid: null, product: "Review of medical records and written report", outcome: "" },
-  { id: "c6", name: "Sepulveda, Henry", lawyerId: "l5", county: "Miami-Dade", caseType: "Federal Criminal", status: "Billed", dateOpened: "2025-01-27", balance: 300, caseNumber: "F23006273", court: "Miami-Dade Circuit", nextHearing: null, mitigationSpecialist: "Katrina Collazo", invoiceNo: "FLA025", source: "fla", rate: 200, unit: 3, total: 900, proBono: 300, totalBilled: 600, datePaid: null, product: "Review of medical records and verbal report", outcome: "took a plea" },
-  { id: "c7", name: "Dorsainvil, Occius", lawyerId: "l6", county: "Miami-Dade", caseType: "Assault / Battery", status: "Active", dateOpened: "2025-09-15", balance: 0, caseNumber: "", court: "Miami-Dade Circuit", nextHearing: "2026-04-01", mitigationSpecialist: "", invoiceNo: "FLA026", source: "fla", rate: null, unit: null, total: null, proBono: null, totalBilled: null, datePaid: null, product: "Review of medical records and verbal report", outcome: "" },
-  { id: "c8", name: "Robinson, Israel", lawyerId: "l8", county: "Norfolk", caseType: "Drug Offense", status: "Billed", dateOpened: "2025-09-28", balance: 0, caseNumber: "710CR24000985-00", court: "Norfolk Circuit", nextHearing: null, mitigationSpecialist: "", invoiceNo: "VA001", source: "ind", rate: 300, unit: 2, total: 600, proBono: 0, totalBilled: 600, datePaid: null, product: "Review of medical records and verbal report for potential testimony", outcome: "" },
-  { id: "c9", name: "Ball, Raymond", lawyerId: "l9", county: "New York", caseType: "Assault / Battery", status: "Intake", dateOpened: "2026-01-26", balance: 0, caseNumber: "", court: "", nextHearing: null, mitigationSpecialist: "", invoiceNo: "DH001", source: "ind", rate: 300, unit: 2.5, total: 750, proBono: 0, totalBilled: null, datePaid: null, product: "Review of medical records and testimony", outcome: "" },
-  { id: "c10", name: "Clark, Vanessa", lawyerId: "l10", county: "Aroostook", caseType: "DUI / DWI", status: "Active", dateOpened: "2025-08-24", balance: 0, caseNumber: "AROCD-CR-2024-00084", court: "Maine District", nextHearing: "2026-03-20", mitigationSpecialist: "", invoiceNo: "", source: "ind", rate: "minimum", unit: null, total: null, proBono: null, totalBilled: null, datePaid: null, product: "Review of medical records and verbal report", outcome: "" },
-];
-
-const SAMPLE_EMAILS = [
-  { id: "e1", lawyerId: "l1", clientId: "c1", subject: "Lancaster — records for IND-70829-25", date: "2025-10-25", time: "10:23 AM", serviceType: "Review Request", body: "Hi Jennifer, we need a review of medical records for Trevor Lancaster. Case is IND-70829-25. Can you give a verbal report after review? Attaching records now.", from: "cwang@legal-aid.org", to: "JGrossmanLNC@gmail.com" },
-  { id: "e1b", lawyerId: "l1", clientId: "c1", subject: "RE: Lancaster — verbal report completed", date: "2025-11-15", time: "2:45 PM", serviceType: "Report Delivered", body: "Christine, verbal report for Trevor Lancaster completed. Reviewed medical records — 3 hours at $300/h. Total: $900. Will include on next invoice.", from: "JGrossmanLNC@gmail.com", to: "cwang@legal-aid.org" },
-  { id: "e2", lawyerId: "l3", clientId: "c3", subject: "Barr — extensive records review needed, 75222/2022", date: "2025-02-07", time: "9:17 AM", serviceType: "Review Request", body: "Jennifer, William Barr's case has extensive medical records. Need thorough review and verbal report. Docket is 75222/2022.", from: "alewis@legal-aid.org", to: "JGrossmanLNC@gmail.com" },
-  { id: "e2b", lawyerId: "l3", clientId: "c3", subject: "RE: Barr — review complete, 7 hours", date: "2025-11-10", time: "4:10 PM", serviceType: "Report Delivered", body: "Allison, completed extensive medical records review and verbal report for William Barr. 7 hours at $300/h. Total: $2,100. Charges were dropped — glad this helped the defense.", from: "JGrossmanLNC@gmail.com", to: "alewis@legal-aid.org" },
-  { id: "e3", lawyerId: "l5", clientId: "c6", subject: "Sepulveda — F23006273 mitigation records", date: "2025-01-20", time: "11:02 AM", serviceType: "Review Request", body: "Jennifer, this is for Henry Sepulveda, F23006273. Katrina Collazo is the mitigation specialist. Need medical records review for mitigation packet.", from: "experts@pdmiami.com", to: "JGrossmanLNC@gmail.com" },
-  { id: "e3b", lawyerId: "l5", clientId: "c6", subject: "RE: Sepulveda — verbal report delivered", date: "2025-01-27", time: "9:30 AM", serviceType: "Report Delivered", body: "Review complete for Sepulveda. 3 hours at $200/h. Giving $300 pro bono. Total billed: $600. He took a plea.", from: "JGrossmanLNC@gmail.com", to: "experts@pdmiami.com" },
-  { id: "e4", lawyerId: "l8", clientId: "c8", subject: "Robinson — 710CR24000985-00 Norfolk PD", date: "2025-09-20", time: "8:44 AM", serviceType: "Review Request", body: "Jennifer, Israel Robinson case 710CR24000985-00. Need medical records review and verbal report, possible testimony down the line.", from: "amyers@norfolk-pd.gov", to: "JGrossmanLNC@gmail.com" },
-  { id: "e4b", lawyerId: "l8", clientId: "c8", subject: "RE: Robinson — review and verbal report done", date: "2025-09-28", time: "3:15 PM", serviceType: "Report Delivered", body: "Alyssa, review and verbal report for Israel Robinson completed. 2 hours at $300/h, total $600. Invoice VA001 attached. Need to send paperwork for billing.", from: "JGrossmanLNC@gmail.com", to: "amyers@norfolk-pd.gov" },
-];
-
-const SAMPLE_EVENTS = [
-  { id: "ev1", title: "Lancaster — Records Review", clientId: "c1", date: "2025-10-27", time: "9:00 AM", duration: 3, type: "Record Review", billable: true },
-  { id: "ev2", title: "Huseinovic — Records Review (min)", clientId: "c2", date: "2025-11-18", time: "1:00 PM", duration: 2, type: "Record Review", billable: true },
-  { id: "ev3", title: "Barr — Extensive Records Review", clientId: "c3", date: "2025-02-10", time: "10:00 AM", duration: 7, type: "Record Review", billable: true },
-  { id: "ev4", title: "Karrara — Written Report", clientId: "c4", date: "2025-12-08", time: "9:00 AM", duration: 6, type: "Report Writing", billable: true },
-  { id: "ev5", title: "Yan — Records Review (in progress)", clientId: "c5", date: "2026-02-20", time: "10:00 AM", duration: 0, type: "Record Review", billable: false },
-  { id: "ev6", title: "Sepulveda — Verbal Report", clientId: "c6", date: "2025-01-27", time: "2:00 PM", duration: 3, type: "Verbal Report", billable: true },
-  { id: "ev7", title: "Robinson — Verbal Report + Testimony Prep", clientId: "c8", date: "2025-09-28", time: "11:00 AM", duration: 2, type: "Verbal Report", billable: true },
-  { id: "ev8", title: "Ball — Records Review + Testimony", clientId: "c9", date: "2026-01-28", time: "9:00 AM", duration: 2.5, type: "Record Review", billable: true },
-  { id: "ev9", title: "Clark — Records Review (MAINE)", clientId: "c10", date: "2025-08-26", time: "10:00 AM", duration: 0, type: "Record Review", billable: false },
-];
 
 const HOURLY_RATE = 300;
 
@@ -4536,11 +4489,10 @@ export default function App() {
   const [invoiceClient, setInvoiceClient] = useState(null);
   const [toast, setToast] = useState(null);
 
-  // All data is mutable — starts with samples, can be replaced by import
-  const [clients, setClients] = useState(SAMPLE_CLIENTS);
-  const [lawyers, setLawyers] = useState(SAMPLE_LAWYERS);
-  const [emails, setEmails] = useState(SAMPLE_EMAILS);
-  const [events, setEvents] = useState(SAMPLE_EVENTS);
+  const [clients, setClients] = useState([]);
+  const [lawyers, setLawyers] = useState([]);
+  const [emails, setEmails] = useState([]);
+  const [events, setEvents] = useState([]);
   const [importStats, setImportStats] = useState(null);
   const [gmailClientId, setGmailClientId] = useState(GMAIL_CLIENT_ID);
   const [dashboardName, setDashboardName] = useState("Jennifer Grossman BSN, RN, LNC");
