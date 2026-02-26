@@ -36,6 +36,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copyToCase: (sourcePath, lawyerName, clientName) => 
     ipcRenderer.invoke('fs:copy-to-case', sourcePath, lawyerName, clientName),
   
+  /** Copy multiple files into the correct case folder (drag-and-drop) */
+  copyFiles: (filePaths, lawyerName, clientName) => 
+    ipcRenderer.invoke('fs:copy-files', filePaths, lawyerName, clientName),
+  
+  /** Get the full path from a File object (for drag-and-drop) */
+  getPathForFile: (file) => {
+    // In Electron 28+, use webUtils.getPathForFile
+    // For older versions, return file.path if available
+    return file?.path || null;
+  },
+  
   /** Move a file to a different case folder */
   moveToCase: (sourcePath, lawyerName, clientName) => 
     ipcRenderer.invoke('fs:move-to-case', sourcePath, lawyerName, clientName),
@@ -77,6 +88,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   /** Get app version */
   getVersion: () => ipcRenderer.invoke('app:version'),
+
+  // ─── Data Persistence ────────────────────────────────────────────────
+  
+  /** Save app data (clients, lawyers, emails, events) to JSON file */
+  saveData: (data) => ipcRenderer.invoke('app:save-data', data),
+  
+  /** Load app data from JSON file */
+  loadData: () => ipcRenderer.invoke('app:load-data'),
 
   // ─── Real-time Updates ───────────────────────────────────────────────
   
