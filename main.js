@@ -407,6 +407,51 @@ function startFileWatcher() {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// DATA PERSISTENCE
+// Saves app data (clients, lawyers, emails, events) to a JSON file
+// This survives app restarts and reloads
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const DATA_FILE_NAME = 'nursebill-data.json';
+let DATA_FILE_PATH = path.join(ROOT_PATH, DATA_FILE_NAME);
+
+/**
+ * Save app data to JSON file
+ */
+function saveAppData(data) {
+  try {
+    ensureRootFolder();
+    const fullPath = path.join(ROOT_PATH, DATA_FILE_NAME);
+    fs.writeFileSync(fullPath, JSON.stringify(data, null, 2), 'utf8');
+    console.log(`App data saved: ${fullPath}`);
+    return true;
+  } catch (err) {
+    console.error('Error saving app data:', err);
+    return false;
+  }
+}
+
+/**
+ * Load app data from JSON file
+ */
+function loadAppData() {
+  try {
+    ensureRootFolder();
+    const fullPath = path.join(ROOT_PATH, DATA_FILE_NAME);
+    if (!fs.existsSync(fullPath)) {
+      console.log('No existing data file found, starting fresh');
+      return null;
+    }
+    const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+    console.log(`App data loaded: ${fullPath}`);
+    return data;
+  } catch (err) {
+    console.error('Error loading app data:', err);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // IPC HANDLERS
 // These bridge the renderer (UI) ↔ main process (file system)
 // The renderer calls these via window.electronAPI (see preload.js)
@@ -415,6 +460,16 @@ function startFileWatcher() {
 // Read the full folder tree
 ipcMain.handle('fs:read-tree', () => {
   return readFolderTree();
+});
+
+// Save app data
+ipcMain.handle('app:save-data', (event, data) => {
+  return saveAppData(data);
+});
+
+// Load app data
+ipcMain.handle('app:load-data', () => {
+  return loadAppData();
 });
 
 // Create a new lawyer folder
@@ -505,6 +560,20 @@ ipcMain.handle('fs:rename-file', (event, oldPath, newName) => {
 // Read a file's raw bytes (used for Excel import in the renderer)
 ipcMain.handle('fs:read-file', (event, filePath) => {
   return fs.readFileSync(filePath);
+});
+
+// Copy multiple files to a case folder (used by drag-and-drop)
+ipcMain.handle('fs:copy-files', async (event, filePaths, lawyerName, clientName) => {
+  const results = [];
+  for (const sourcePath of filePaths) {
+    try {
+      const result = await copyToCase(sourcePath, lawyerName, clientName);
+      results.push({ path: sourcePath, success: true, result });
+    } catch (err) {
+      results.push({ path: sourcePath, success: false, error: err.message });
+    }
+  }
+  return results;
 });
 
 // Check if running in Electron

@@ -3093,6 +3093,77 @@ function UploadTab({ clients, lawyers }) {
     return rootPath;
   }, [selectedFolder, folderTree, rootPath]);
 
+  // Handle files dropped via drag-and-drop
+  const handleDropFiles = async (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    
+    if (!window.electronAPI || !isElectron) {
+      setToast({ msg: "Drag-and-drop requires the desktop app", type: "info" });
+      return;
+    }
+    
+    if (selectedFolder === "all") {
+      setToast({ msg: "Please select a lawyer or client folder first", type: "error" });
+      return;
+    }
+
+    // Get file paths from the drop event
+    // In Electron, we need to use webUtils.getPathForFile() for each file
+    const files = Array.from(e.dataTransfer.files);
+    const filePaths = [];
+    
+    for (const file of files) {
+      // Try to get the path using Electron's webUtils if available
+      if (window.electronAPI?.getPathForFile) {
+        const filePath = await window.electronAPI.getPathForFile(file);
+        if (filePath) filePaths.push(filePath);
+      } else {
+        // Fallback: try to read the file object path property (may not work in all cases)
+        const filePath = file.path;
+        if (filePath) filePaths.push(filePath);
+      }
+    }
+
+    if (filePaths.length === 0) {
+      setToast({ msg: "Could not get file paths. Please use the click-to-add button instead.", type: "error" });
+      return;
+    }
+
+    // Find the lawyer/client names from the selected folder
+    let lawyerName = "";
+    let clientName = "";
+    
+    for (const l of folderTree) {
+      if (l.id === selectedFolder) {
+        lawyerName = l.label;
+        break;
+      }
+      for (const c of l.children) {
+        if (c.id === selectedFolder) {
+          lawyerName = l.label;
+          clientName = c.label;
+          break;
+        }
+      }
+      if (lawyerName) break;
+    }
+
+    // Copy the files
+    try {
+      const results = await window.electronAPI.copyFiles(filePaths, lawyerName, clientName);
+      const successCount = results.filter(r => r.success).length;
+      await refreshTree();
+      setToast({ 
+        msg: `${successCount} of ${filePaths.length} file${filePaths.length !== 1 ? "s" : ""} copied to ${selectedFolderLabel}!`, 
+        type: successCount === filePaths.length ? "success" : "info" 
+      });
+    } catch (err) {
+      console.error("Drop copy error:", err);
+      setToast({ msg: "Failed to copy files: " + err.message, type: "error" });
+    }
+  };
+
   // File operations using Electron APIs
   const handlePickFiles = async () => {
     if (window.electronAPI && isElectron) {
@@ -3340,7 +3411,7 @@ function UploadTab({ clients, lawyers }) {
             className={`upload-dropzone ${dragOver ? "dragover" : ""}`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => { e.preventDefault(); setDragOver(false); handlePickFiles(); }}
+            onDrop={handleDropFiles}
             onClick={handlePickFiles}
           >
             <div className="drop-icon"><Icons.Upload /></div>
@@ -4561,6 +4632,39 @@ export default function App() {
   });
   const gmail = useGmail();
   const gcal  = useGoogleCalendar();
+
+  // ─── Data Persistence ───────────────────────────────────────────────────
+  // Load persisted app data on mount (Electron only)
+  useEffect(() => {
+    async function loadAppData() {
+      if (!window.electronAPI?.loadAppData) return;
+      try {
+        const data = await window.electronAPI.loadAppData();
+        if (data) {
+          if (data.clients) setClients(data.clients);
+          if (data.lawyers) setLawyers(data.lawyers);
+          if (data.emails) setEmails(data.emails);
+          if (data.events) setEvents(data.events);
+        }
+      } catch (e) {
+        console.warn("Failed to load app data:", e);
+      }
+    }
+    loadAppData();
+  }, []);
+
+  // Save app data whenever state changes (debounced, Electron only)
+  useEffect(() => {
+    if (!window.electronAPI?.saveAppData) return;
+    const timeoutId = setTimeout(async () => {
+      try {
+        await window.electronAPI.saveAppData({ clients, lawyers, emails, events });
+      } catch (e) {
+        console.warn("Failed to save app data:", e);
+      }
+    }, 1000); // Debounce: wait 1 second after last change
+    return () => clearTimeout(timeoutId);
+  }, [clients, lawyers, emails, events]);
 
   const showToast = (msg, type = "success") => setToast({ msg, type });
 
