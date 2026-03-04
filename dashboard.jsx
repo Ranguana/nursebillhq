@@ -922,7 +922,7 @@ tr:hover td { background: var(--accent-lighter); }
 
 .empty-state p { font-size: 13px; }
 
-/* ─── Upload / Hightail ───────────────────────────── */
+/* ─── Uploads ─────────────────────────────────────── */
 .upload-layout {
   display: grid;
   grid-template-columns: 280px 1fr;
@@ -1076,41 +1076,6 @@ tr:hover td { background: var(--accent-lighter); }
   white-space: nowrap;
 }
 
-.hightail-banner {
-  background: linear-gradient(135deg, #2a2438 0%, #3d2a5c 50%, #8b5cf6 100%);
-  border-radius: var(--radius-lg);
-  padding: 24px;
-  color: #fff;
-  margin-bottom: 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.hightail-banner h3 {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-
-.hightail-banner p {
-  font-size: 13px;
-  opacity: 0.8;
-}
-
-.hightail-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-radius: var(--radius);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.hightail-status.connected { background: rgba(46,125,50,0.2); color: #a5d6a7; }
-.hightail-status.disconnected { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.7); }
 
 .progress-bar-track {
   height: 4px;
@@ -1353,63 +1318,130 @@ tr:hover td { background: var(--accent-lighter); }
 // Uses Google Identity Services + Gmail API for reading & sending email.
 // To set up: console.cloud.google.com → enable Gmail API → create OAuth2 Web credentials
 
-const GMAIL_CLIENT_ID = "201626866277-9nlpvo0lkhjcc6dda3cka10ctprdm9vt.apps.googleusercontent.com";
+const GMAIL_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "201626866277-ai49sc8ivligcqdb1n3gtm8um2it4qsl.apps.googleusercontent.com";
 const GMAIL_SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send";
 
 function useGmail() {
-  const [gmailToken, setGmailToken] = useState(null);
-  const [gmailUser, setGmailUser] = useState(null);
+  // Auth object: { accessToken, refreshToken, expiresAt } — or null if not connected.
+  // localStorage key stores JSON; old plain-string values are silently cleared.
+  const [gmailAuth, setGmailAuth] = useState(() => {
+    try {
+      const stored = localStorage.getItem("nursebill_gmail_token");
+      if (!stored) return null;
+      const parsed = JSON.parse(stored);
+      if (parsed?.accessToken && parsed?.expiresAt) return parsed;
+      return null; // old plain-string format — clear it
+    } catch { return null; }
+  });
+  const [gmailUser, setGmailUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("nursebill_gmail_user")); } catch { return null; }
+  });
   const [gmailLoading, setGmailLoading] = useState(false);
   const [gmailError, setGmailError] = useState(null);
 
+  // Derived: plain access token string for backward-compat with callers
+  const gmailToken = gmailAuth?.accessToken || null;
   const isConnected = !!gmailToken;
+
+  // Persist auth + user to localStorage
+  useEffect(() => {
+    if (gmailAuth) localStorage.setItem("nursebill_gmail_token", JSON.stringify(gmailAuth));
+    else localStorage.removeItem("nursebill_gmail_token");
+  }, [gmailAuth]);
+  useEffect(() => {
+    if (gmailUser) localStorage.setItem("nursebill_gmail_user", JSON.stringify(gmailUser));
+    else localStorage.removeItem("nursebill_gmail_user");
+  }, [gmailUser]);
+
+  // On startup: if token is expired, try to refresh silently; if no refresh token, clear.
+  useEffect(() => {
+    if (!gmailAuth) return;
+    if (gmailAuth.expiresAt > Date.now()) return; // still valid
+    if (!gmailAuth.refreshToken || !window.electronAPI?.googleRefreshToken) {
+      setGmailAuth(null); setGmailUser(null); return;
+    }
+    window.electronAPI.googleRefreshToken(GMAIL_CLIENT_ID, gmailAuth.refreshToken)
+      .then(result => setGmailAuth(prev => ({ ...prev, accessToken: result.accessToken, expiresAt: result.expiresAt })))
+      .catch(() => { setGmailAuth(null); setGmailUser(null); });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Returns a valid access token, auto-refreshing if it expires within 5 minutes.
+  const ensureValidToken = useCallback(async () => {
+    if (!gmailAuth) throw new Error("Not connected to Gmail");
+    if (gmailAuth.expiresAt - Date.now() > 5 * 60 * 1000) return gmailAuth.accessToken;
+    if (!gmailAuth.refreshToken || !window.electronAPI?.googleRefreshToken) {
+      setGmailAuth(null); throw new Error("Gmail session expired — please reconnect");
+    }
+    try {
+      const result = await window.electronAPI.googleRefreshToken(GMAIL_CLIENT_ID, gmailAuth.refreshToken);
+      const newAuth = { ...gmailAuth, accessToken: result.accessToken, expiresAt: result.expiresAt };
+      setGmailAuth(newAuth);
+      return newAuth.accessToken;
+    } catch (e) {
+      setGmailAuth(null);
+      throw new Error("Gmail session expired — please reconnect");
+    }
+  }, [gmailAuth]);
 
   const connect = async (clientId) => {
     if (!clientId) { setGmailError("No Google Client ID — use Settings to configure."); return; }
-    setGmailLoading(true);
-    setGmailError(null);
+    setGmailLoading(true); setGmailError(null);
     try {
-      if (!window.google?.accounts?.oauth2) {
-        await new Promise((resolve, reject) => {
-          if (document.getElementById("gsi-script")) { resolve(); return; }
-          const s = document.createElement("script");
-          s.id = "gsi-script"; s.src = "https://accounts.google.com/gsi/client";
-          s.onload = resolve; s.onerror = () => reject(new Error("Failed to load Google Identity Services"));
-          document.head.appendChild(s);
+      if (window.electronAPI?.googleAuthCode) {
+        // Electron: proper auth code flow → gets refresh token
+        const result = await window.electronAPI.googleAuthCode(clientId, GMAIL_SCOPES);
+        setGmailAuth(result);
+        try {
+          const p = await fetch("https://www.googleapis.com/gmail/v1/users/me/profile", { headers: { Authorization: `Bearer ${result.accessToken}` } }).then(r => r.json());
+          setGmailUser({ email: p.emailAddress });
+        } catch { setGmailUser({ email: "Connected" }); }
+        setGmailLoading(false);
+      } else {
+        // Browser dev fallback: GIS implicit flow (no refresh token)
+        if (!window.google?.accounts?.oauth2) {
+          await new Promise((resolve, reject) => {
+            if (document.getElementById("gsi-script")) { resolve(); return; }
+            const s = document.createElement("script");
+            s.id = "gsi-script"; s.src = "https://accounts.google.com/gsi/client";
+            s.onload = resolve; s.onerror = () => reject(new Error("Failed to load Google Identity Services"));
+            document.head.appendChild(s);
+          });
+        }
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId, scope: GMAIL_SCOPES,
+          callback: async (response) => {
+            if (response.error) { setGmailError(response.error_description || response.error); setGmailLoading(false); return; }
+            setGmailAuth({ accessToken: response.access_token, refreshToken: null, expiresAt: Date.now() + 3600000 });
+            try {
+              const p = await fetch("https://www.googleapis.com/gmail/v1/users/me/profile", { headers: { Authorization: `Bearer ${response.access_token}` } }).then(r => r.json());
+              setGmailUser({ email: p.emailAddress });
+            } catch { setGmailUser({ email: "Connected" }); }
+            setGmailLoading(false);
+          },
         });
+        tokenClient.requestAccessToken();
       }
-      const tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId, scope: GMAIL_SCOPES,
-        callback: async (response) => {
-          if (response.error) { setGmailError(response.error_description || response.error); setGmailLoading(false); return; }
-          setGmailToken(response.access_token);
-          try {
-            const p = await fetch("https://www.googleapis.com/gmail/v1/users/me/profile", { headers: { Authorization: `Bearer ${response.access_token}` } }).then(r => r.json());
-            setGmailUser({ email: p.emailAddress, messagesTotal: p.messagesTotal });
-          } catch (e) { setGmailUser({ email: "Connected" }); }
-          setGmailLoading(false);
-        },
-      });
-      tokenClient.requestAccessToken();
     } catch (e) { setGmailError(e.message); setGmailLoading(false); }
   };
 
   const disconnect = () => {
     if (gmailToken && window.google?.accounts?.oauth2) window.google.accounts.oauth2.revoke(gmailToken);
-    setGmailToken(null); setGmailUser(null);
+    setGmailAuth(null); setGmailUser(null);
+    localStorage.removeItem("nursebill_gmail_token");
+    localStorage.removeItem("nursebill_gmail_user");
   };
 
   const searchEmails = async (query, maxResults = 20) => {
-    if (!gmailToken) throw new Error("Not connected to Gmail");
-    const res = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`, { headers: { Authorization: `Bearer ${gmailToken}` } });
-    if (!res.ok) { if (res.status === 401) { setGmailToken(null); setGmailUser(null); } throw new Error(`Gmail search failed: ${res.status}`); }
+    const token = await ensureValidToken();
+    const res = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) { if (res.status === 401) { setGmailAuth(null); setGmailUser(null); } throw new Error(`Gmail search failed: ${res.status}`); }
     const data = await res.json();
     return data.messages || [];
   };
 
   const getMessage = async (messageId) => {
-    if (!gmailToken) throw new Error("Not connected to Gmail");
-    const res = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`, { headers: { Authorization: `Bearer ${gmailToken}` } });
+    const token = await ensureValidToken();
+    const res = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error(`Failed to fetch message: ${res.status}`);
     const msg = await res.json();
     const getHeader = (name) => (msg.payload?.headers?.find(h => h.name.toLowerCase() === name.toLowerCase()))?.value || "";
@@ -1423,7 +1455,6 @@ function useGmail() {
   };
 
   const pullEmailsForCase = async (client, lawyer) => {
-    if (!gmailToken) throw new Error("Not connected to Gmail");
     setGmailLoading(true); setGmailError(null);
     try {
       const terms = [];
@@ -1442,12 +1473,59 @@ function useGmail() {
     } catch (e) { setGmailError(e.message); setGmailLoading(false); throw e; }
   };
 
-  const sendEmail = async ({ to, subject, body }) => {
-    if (!gmailToken) throw new Error("Not connected to Gmail");
-    const mime = [`To: ${to}`, `Subject: ${subject}`, `MIME-Version: 1.0`, `Content-Type: text/plain; charset="UTF-8"`, "", body].join("\r\n");
-    const raw = btoa(unescape(encodeURIComponent(mime))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const sendEmail = async ({ to, subject, body, attachments = [], signature = "" }) => {
+    const token = await ensureValidToken();
+    const fullBody = signature ? `${body}\n\n${signature}` : body;
+    const boundary = `nursebill_${Date.now()}`;
+    const encodedSubject = /[^\x00-\x7F]/.test(subject)
+      ? `=?UTF-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`
+      : subject;
+
+    let mime;
+    if (attachments.length === 0) {
+      const bodyB64 = btoa(unescape(encodeURIComponent(fullBody))).replace(/(.{76})/g, "$1\r\n");
+      mime = [
+        `From: ${gmailUser?.email || "me"}`,
+        `To: ${to}`,
+        `Subject: ${encodedSubject}`,
+        `MIME-Version: 1.0`,
+        `Content-Type: text/plain; charset="UTF-8"`,
+        `Content-Transfer-Encoding: base64`,
+        "",
+        bodyB64,
+      ].join("\r\n");
+    } else {
+      mime = [
+        `From: ${gmailUser?.email || "me"}`,
+        `To: ${to}`,
+        `Subject: ${encodedSubject}`,
+        `MIME-Version: 1.0`,
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        "",
+        `--${boundary}`,
+        `Content-Type: text/plain; charset="UTF-8"`,
+        `Content-Transfer-Encoding: base64`,
+        "",
+        btoa(unescape(encodeURIComponent(fullBody))).replace(/(.{76})/g, "$1\r\n"),
+      ].join("\r\n");
+      for (const att of attachments) {
+        mime += [
+          "",
+          `--${boundary}`,
+          `Content-Type: ${att.mimeType}; name="${att.filename}"`,
+          `Content-Disposition: attachment; filename="${att.filename}"`,
+          `Content-Transfer-Encoding: base64`,
+          "",
+          att.base64data.replace(/(.{76})/g, "$1\r\n"),
+        ].join("\r\n");
+      }
+      mime += `\r\n--${boundary}--`;
+    }
+
+    const raw = btoa(unescape(encodeURIComponent(mime)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     const res = await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send", {
-      method: "POST", headers: { Authorization: `Bearer ${gmailToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ raw }),
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ raw }),
     });
     if (!res.ok) throw new Error(`Failed to send: ${res.status}`);
     return await res.json();
@@ -1462,59 +1540,128 @@ const GCAL_SCOPES = "https://www.googleapis.com/auth/calendar.events";
 const GCAL_BASE = "https://www.googleapis.com/calendar/v3";
 
 function useGoogleCalendar() {
-  const [calToken, setCalToken]     = useState(null);
-  const [calUser,  setCalUser]      = useState(null);
+  // Auth object: { accessToken, refreshToken, expiresAt } — or null if not connected.
+  const [calAuth, setCalAuth] = useState(() => {
+    try {
+      const stored = localStorage.getItem("nursebill_gcal_token");
+      if (!stored) return null;
+      const parsed = JSON.parse(stored);
+      if (parsed?.accessToken && parsed?.expiresAt) return parsed;
+      return null; // old plain-string format — clear it
+    } catch { return null; }
+  });
+  const [calUser, setCalUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("nursebill_gcal_user")); } catch { return null; }
+  });
   const [calLoading, setCalLoading] = useState(false);
   const [calError,   setCalError]   = useState(null);
-  const [syncToken,  setSyncToken]  = useState(null);   // incremental sync cursor
+  const [syncToken, setSyncToken] = useState(
+    () => localStorage.getItem("nursebill_gcal_sync_token") || null
+  );
   const [lastSynced, setLastSynced] = useState(null);
 
+  // Derived: plain access token string for API calls
+  const calToken = calAuth?.accessToken || null;
   const isConnected = !!calToken;
 
-  // Ensure GSI script is loaded (may already be loaded by Gmail hook)
-  const ensureGSI = () => new Promise((resolve, reject) => {
-    if (window.google?.accounts?.oauth2) { resolve(); return; }
-    if (document.getElementById("gsi-script")) {
-      // Tag exists but not yet loaded — wait
-      const check = setInterval(() => { if (window.google?.accounts?.oauth2) { clearInterval(check); resolve(); } }, 100);
-      setTimeout(() => { clearInterval(check); resolve(); }, 5000);
-      return;
-    }
-    const s = document.createElement("script");
-    s.id = "gsi-script"; s.src = "https://accounts.google.com/gsi/client";
-    s.onload = resolve; s.onerror = () => reject(new Error("Failed to load Google Identity Services"));
-    document.head.appendChild(s);
-  });
+  // Persist auth + user + syncToken to localStorage
+  useEffect(() => {
+    if (calAuth) localStorage.setItem("nursebill_gcal_token", JSON.stringify(calAuth));
+    else localStorage.removeItem("nursebill_gcal_token");
+  }, [calAuth]);
+  useEffect(() => {
+    if (calUser) localStorage.setItem("nursebill_gcal_user", JSON.stringify(calUser));
+    else localStorage.removeItem("nursebill_gcal_user");
+  }, [calUser]);
+  useEffect(() => {
+    if (syncToken) localStorage.setItem("nursebill_gcal_sync_token", syncToken);
+    else localStorage.removeItem("nursebill_gcal_sync_token");
+  }, [syncToken]);
 
-  const handleUnauthorized = () => { setCalToken(null); setCalUser(null); };
+  // On startup: silently refresh if token is expired
+  useEffect(() => {
+    if (!calAuth) return;
+    if (calAuth.expiresAt > Date.now()) return; // still valid
+    if (!calAuth.refreshToken || !window.electronAPI?.googleRefreshToken) {
+      setCalAuth(null); setCalUser(null); setSyncToken(null); return;
+    }
+    window.electronAPI.googleRefreshToken(GMAIL_CLIENT_ID, calAuth.refreshToken)
+      .then(result => setCalAuth(prev => ({ ...prev, accessToken: result.accessToken, expiresAt: result.expiresAt })))
+      .catch(() => { setCalAuth(null); setCalUser(null); setSyncToken(null); });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Returns a valid access token, auto-refreshing if near expiry.
+  const ensureValidCalToken = useCallback(async () => {
+    if (!calAuth) throw new Error("Not connected to Google Calendar");
+    if (calAuth.expiresAt - Date.now() > 5 * 60 * 1000) return calAuth.accessToken;
+    if (!calAuth.refreshToken || !window.electronAPI?.googleRefreshToken) {
+      setCalAuth(null); throw new Error("Calendar session expired — please reconnect");
+    }
+    try {
+      const result = await window.electronAPI.googleRefreshToken(GMAIL_CLIENT_ID, calAuth.refreshToken);
+      const newAuth = { ...calAuth, accessToken: result.accessToken, expiresAt: result.expiresAt };
+      setCalAuth(newAuth);
+      return newAuth.accessToken;
+    } catch (e) {
+      setCalAuth(null);
+      throw new Error("Calendar session expired — please reconnect");
+    }
+  }, [calAuth]);
+
+  const handleUnauthorized = () => { setCalAuth(null); setCalUser(null); };
 
   const connect = async (clientId) => {
     if (!clientId) { setCalError("No Google Client ID configured."); return; }
     setCalLoading(true); setCalError(null);
     try {
-      await ensureGSI();
-      const tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: GCAL_SCOPES,
-        callback: async (response) => {
-          if (response.error) { setCalError(response.error_description || response.error); setCalLoading(false); return; }
-          setCalToken(response.access_token);
-          // Get timezone to confirm connection
-          try {
-            const r = await fetch(`${GCAL_BASE}/users/me/settings/timezone`, { headers: { Authorization: `Bearer ${response.access_token}` } });
-            const d = r.ok ? await r.json() : {};
-            setCalUser({ timezone: d.value || "UTC" });
-          } catch { setCalUser({ timezone: "UTC" }); }
-          setCalLoading(false);
-        },
-      });
-      tokenClient.requestAccessToken();
+      if (window.electronAPI?.googleAuthCode) {
+        // Electron: proper auth code flow → gets refresh token
+        const result = await window.electronAPI.googleAuthCode(clientId, GCAL_SCOPES);
+        setCalAuth(result);
+        try {
+          const r = await fetch(`${GCAL_BASE}/users/me/settings/timezone`, { headers: { Authorization: `Bearer ${result.accessToken}` } });
+          const d = r.ok ? await r.json() : {};
+          setCalUser({ timezone: d.value || "UTC" });
+        } catch { setCalUser({ timezone: "UTC" }); }
+        setCalLoading(false);
+      } else {
+        // Browser dev fallback: GIS implicit flow
+        const ensureGSI = () => new Promise((resolve, reject) => {
+          if (window.google?.accounts?.oauth2) { resolve(); return; }
+          if (document.getElementById("gsi-script")) {
+            const check = setInterval(() => { if (window.google?.accounts?.oauth2) { clearInterval(check); resolve(); } }, 100);
+            setTimeout(() => { clearInterval(check); resolve(); }, 5000); return;
+          }
+          const s = document.createElement("script");
+          s.id = "gsi-script"; s.src = "https://accounts.google.com/gsi/client";
+          s.onload = resolve; s.onerror = () => reject(new Error("Failed to load Google Identity Services"));
+          document.head.appendChild(s);
+        });
+        await ensureGSI();
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId, scope: GCAL_SCOPES,
+          callback: async (response) => {
+            if (response.error) { setCalError(response.error_description || response.error); setCalLoading(false); return; }
+            setCalAuth({ accessToken: response.access_token, refreshToken: null, expiresAt: Date.now() + 3600000 });
+            try {
+              const r = await fetch(`${GCAL_BASE}/users/me/settings/timezone`, { headers: { Authorization: `Bearer ${response.access_token}` } });
+              const d = r.ok ? await r.json() : {};
+              setCalUser({ timezone: d.value || "UTC" });
+            } catch { setCalUser({ timezone: "UTC" }); }
+            setCalLoading(false);
+          },
+        });
+        tokenClient.requestAccessToken();
+      }
     } catch (e) { setCalError(e.message); setCalLoading(false); }
   };
 
   const disconnect = () => {
     if (calToken && window.google?.accounts?.oauth2) window.google.accounts.oauth2.revoke(calToken);
-    setCalToken(null); setCalUser(null); setSyncToken(null); setLastSynced(null);
+    setCalAuth(null); setCalUser(null); setSyncToken(null); setLastSynced(null);
+    localStorage.removeItem("nursebill_gcal_token");
+    localStorage.removeItem("nursebill_gcal_user");
+    localStorage.removeItem("nursebill_gcal_sync_token");
   };
 
   // Build a Google Calendar event body for a client due date (all-day event)
@@ -1553,10 +1700,11 @@ function useGoogleCalendar() {
   };
 
   const createEvent = async (client, lawyer) => {
-    if (!calToken || !client.dueDate) return null;
+    if (!client.dueDate) return null;
+    const token = await ensureValidCalToken();
     const res = await fetch(`${GCAL_BASE}/calendars/primary/events`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${calToken}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(buildEventBody(client, lawyer)),
     });
     if (!res.ok) { if (res.status === 401) handleUnauthorized(); throw new Error(`Calendar create failed: ${res.status}`); }
@@ -1564,10 +1712,11 @@ function useGoogleCalendar() {
   };
 
   const updateEvent = async (eventId, client, lawyer) => {
-    if (!calToken || !eventId || !client.dueDate) return null;
+    if (!eventId || !client.dueDate) return null;
+    const token = await ensureValidCalToken();
     const res = await fetch(`${GCAL_BASE}/calendars/primary/events/${encodeURIComponent(eventId)}`, {
       method: "PATCH",
-      headers: { Authorization: `Bearer ${calToken}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(buildEventBody(client, lawyer)),
     });
     if (res.status === 401) { handleUnauthorized(); return null; }
@@ -1577,10 +1726,11 @@ function useGoogleCalendar() {
   };
 
   const deleteEvent = async (eventId) => {
-    if (!calToken || !eventId) return;
+    if (!eventId) return;
+    const token = await ensureValidCalToken();
     const res = await fetch(`${GCAL_BASE}/calendars/primary/events/${encodeURIComponent(eventId)}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${calToken}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
     if (res.status === 401) handleUnauthorized();
     // 404/410 = already gone, that's fine
@@ -1589,7 +1739,7 @@ function useGoogleCalendar() {
   // Create or update a calendar event for this client's due date.
   // Pass newDueDate="" to delete. Returns the new gcalEventId (or null).
   const syncDueDate = async (client, lawyer, newDueDate, currentEventId) => {
-    if (!calToken) return currentEventId ?? null;
+    if (!calAuth) return currentEventId ?? null;
     const patched = { ...client, dueDate: newDueDate };
 
     if (!newDueDate) {
@@ -1613,9 +1763,10 @@ function useGoogleCalendar() {
   // Uses incremental sync (syncToken) for efficiency after the first call.
   // Returns [{clientId, dueDate, gcalEventId}] — callers apply to client state.
   const pollChanges = async () => {
-    if (!calToken) return [];
+    if (!calAuth) return [];
     setCalLoading(true);
     try {
+      const token = await ensureValidCalToken();
       let url;
       if (syncToken) {
         url = `${GCAL_BASE}/calendars/primary/events?syncToken=${encodeURIComponent(syncToken)}&showDeleted=true`;
@@ -1625,7 +1776,7 @@ function useGoogleCalendar() {
         url = `${GCAL_BASE}/calendars/primary/events?privateExtendedProperty=nursebillApp%3Dtrue&showDeleted=true&timeMin=${encodeURIComponent(timeMin.toISOString())}`;
       }
 
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${calToken}` } });
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
 
       if (res.status === 410) { setSyncToken(null); setCalLoading(false); return []; } // expired — reset
       if (res.status === 401) { handleUnauthorized(); setCalLoading(false); return []; }
@@ -1650,9 +1801,43 @@ function useGoogleCalendar() {
     }
   };
 
+  // Create any calendar event (meeting, testimony, etc.) by title/date/time.
+  // Returns the new gcalEventId.
+  const createCalendarEvent = async ({ summary, date, time, description }) => {
+    const token = await ensureValidCalToken();
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    let start, end;
+    if (time) {
+      const pad = n => String(n).padStart(2, "0");
+      const endMs = new Date(`${date}T${time}:00`).getTime() + 3600000;
+      const endD = new Date(endMs);
+      start = { dateTime: `${date}T${time}:00`, timeZone: tz };
+      end   = { dateTime: `${endD.getFullYear()}-${pad(endD.getMonth()+1)}-${pad(endD.getDate())}T${pad(endD.getHours())}:${pad(endD.getMinutes())}:00`, timeZone: tz };
+    } else {
+      const nextDay = new Date(`${date}T12:00:00`);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const pad = n => String(n).padStart(2, "0");
+      start = { date };
+      end   = { date: `${nextDay.getFullYear()}-${pad(nextDay.getMonth()+1)}-${pad(nextDay.getDate())}` };
+    }
+    const res = await fetch(`${GCAL_BASE}/calendars/primary/events`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary,
+        description: description || "",
+        start, end,
+        reminders: { useDefault: false, overrides: [{ method: "popup", minutes: 60 }] },
+        extendedProperties: { private: { nursebillApp: "true" } },
+      }),
+    });
+    if (!res.ok) { if (res.status === 401) handleUnauthorized(); throw new Error(`Calendar event failed: ${res.status}`); }
+    return (await res.json()).id;
+  };
+
   return {
     isConnected, calToken, calUser, calLoading, calError, lastSynced, syncToken,
-    connect, disconnect, syncDueDate, pollChanges, deleteEvent,
+    connect, disconnect, syncDueDate, pollChanges, deleteEvent, createCalendarEvent,
   };
 }
 
@@ -1915,6 +2100,28 @@ function CaseDetail({ client, lawyer, emails, events, onBack, onGenerateInvoice,
   const emptyEvent = { title: "", date: new Date().toISOString().split("T")[0], duration: "", type: "Record Review", billable: true };
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [newEvent, setNewEvent] = useState(emptyEvent);
+
+  const emptySchedule = { date: new Date().toISOString().split("T")[0], time: "", notes: "" };
+  const [scheduleType, setScheduleType] = useState(null); // "Meeting" | "Testimony"
+  const [scheduleForm, setScheduleForm] = useState(emptySchedule);
+
+  const saveScheduledEvent = async () => {
+    if (!scheduleForm.date) return;
+    const title = `${scheduleType}: ${client.name}`;
+    const ev = {
+      id: `ev${Date.now()}`, clientId: client.id,
+      title, date: scheduleForm.date, time: scheduleForm.time,
+      type: scheduleType, billable: scheduleType === "Testimony",
+      duration: 0, notes: scheduleForm.notes,
+    };
+    onAddEvent(ev);
+    if (gcal?.isConnected && gcal.createCalendarEvent) {
+      gcal.createCalendarEvent({ summary: title, date: scheduleForm.date, time: scheduleForm.time, description: scheduleForm.notes }).catch(console.warn);
+    }
+    setScheduleForm(emptySchedule);
+    setScheduleType(null);
+  };
+
   const [caseFiles, setCaseFiles] = useState([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -2131,10 +2338,42 @@ function CaseDetail({ client, lawyer, emails, events, onBack, onGenerateInvoice,
           <div className="detail-section">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <h4 style={{ marginBottom: 0 }}>Billable Events</h4>
-              <button className="btn btn-sm btn-primary" onClick={() => setShowAddEvent(!showAddEvent)}>
-                {showAddEvent ? "Cancel" : "+ Add Event"}
-              </button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="btn btn-sm btn-secondary" onClick={() => { setScheduleType(scheduleType === "Meeting" ? null : "Meeting"); setShowAddEvent(false); }}>
+                  {scheduleType === "Meeting" ? "Cancel" : "+ Meeting"}
+                </button>
+                <button className="btn btn-sm btn-secondary" onClick={() => { setScheduleType(scheduleType === "Testimony" ? null : "Testimony"); setShowAddEvent(false); }}>
+                  {scheduleType === "Testimony" ? "Cancel" : "+ Testimony"}
+                </button>
+                <button className="btn btn-sm btn-primary" onClick={() => { setShowAddEvent(!showAddEvent); setScheduleType(null); }}>
+                  {showAddEvent ? "Cancel" : "+ Add Event"}
+                </button>
+              </div>
             </div>
+
+            {scheduleType && (
+              <div style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: 14, marginBottom: 12 }}>
+                <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, color: "var(--accent)" }}>
+                  Schedule {scheduleType}{gcal?.isConnected ? " · will sync to Google Calendar" : ""}
+                </p>
+                <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+                  <div className="form-group">
+                    <label style={{ fontSize: 11 }}>Date</label>
+                    <input type="date" value={scheduleForm.date} onChange={(e) => setScheduleForm({ ...scheduleForm, date: e.target.value })} style={{ fontSize: 12 }} />
+                  </div>
+                  <div className="form-group">
+                    <label style={{ fontSize: 11 }}>Time (optional)</label>
+                    <input type="time" value={scheduleForm.time} onChange={(e) => setScheduleForm({ ...scheduleForm, time: e.target.value })} style={{ fontSize: 12 }} />
+                  </div>
+                  <div className="form-group">
+                    <label style={{ fontSize: 11 }}>Notes</label>
+                    <input value={scheduleForm.notes} onChange={(e) => setScheduleForm({ ...scheduleForm, notes: e.target.value })} placeholder="Location, details..." style={{ fontSize: 12 }} />
+                  </div>
+                </div>
+                <button className="btn btn-sm btn-primary" onClick={saveScheduledEvent} style={{ marginTop: 8 }}>Save</button>
+              </div>
+            )}
+
 
             {showAddEvent && (
               <div style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: 14, marginBottom: 12 }}>
@@ -2425,7 +2664,7 @@ function CaseDetail({ client, lawyer, emails, events, onBack, onGenerateInvoice,
 }
 
 // ─── Settings Tab ────────────────────────────────────────────────────────────
-function SettingsTab({ dashboardName, setDashboardName, clients, lawyers, onClearAll, syncFolder, onChangeSyncFolder, gcal, gmailClientId, billingSources, setBillingSources }) {
+function SettingsTab({ dashboardName, setDashboardName, userPhone, setUserPhone, userPaymentAddress, setUserPaymentAddress, userSignature, setUserSignature, clients, lawyers, onClearAll, syncFolder, onChangeSyncFolder, gcal, gmail, gmailClientId, billingSources, setBillingSources }) {
   const [nameInput, setNameInput] = useState(dashboardName);
   const [clearConfirm, setClearConfirm] = useState(false);
   const [folderLoading, setFolderLoading] = useState(false);
@@ -2465,7 +2704,7 @@ function SettingsTab({ dashboardName, setDashboardName, clients, lawyers, onClea
       {/* Your Name */}
       <div style={sectionStyle}>
         <h3 style={{ fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Your Profile</h3>
-        <div style={{ marginBottom: 8 }}>
+        <div style={{ marginBottom: 12 }}>
           <label style={labelStyle}>Name &amp; Credentials</label>
           <div style={{ display: "flex", gap: 10 }}>
             <input
@@ -2473,12 +2712,74 @@ function SettingsTab({ dashboardName, setDashboardName, clients, lawyers, onClea
               onChange={(e) => setNameInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleNameSave()}
               style={{ flex: 1, fontSize: 14, padding: "8px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--surface)", color: "var(--text-primary)" }}
-              placeholder="Jennifer Grossman BSN, RN, LNC"
+              placeholder="Your Name BSN, RN, LNC"
             />
             <button className="btn btn-primary" onClick={handleNameSave}>Save</button>
           </div>
-          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>Shown in the sidebar under the NurseBill logo.</p>
+          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>Shown in invoices and the sidebar.</p>
         </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Phone Number</label>
+          <input
+            value={userPhone}
+            onChange={(e) => setUserPhone(e.target.value)}
+            style={inputStyle}
+            placeholder="e.g. 413.555.0100"
+          />
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Payment Address (shown on invoices)</label>
+          <input
+            value={userPaymentAddress}
+            onChange={(e) => setUserPaymentAddress(e.target.value)}
+            style={inputStyle}
+            placeholder="e.g. 123 Main St, City, State ZIP"
+          />
+        </div>
+        <div style={{ marginBottom: 8 }}>
+          <label style={labelStyle}>Email Signature</label>
+          <textarea
+            value={userSignature}
+            onChange={(e) => setUserSignature(e.target.value)}
+            style={{ ...inputStyle, minHeight: 100, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5 }}
+            placeholder={"e.g.\nJane Smith BSN, RN, LNC\nCriminal Defense Nurse Consultant\n413.555.0100"}
+          />
+          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>Appended to every email sent from NurseBill.</p>
+        </div>
+      </div>
+
+      {/* Gmail */}
+      <div style={sectionStyle}>
+        <h3 style={{ fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Gmail</h3>
+        <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 14 }}>
+          Connect Gmail to pull case-related emails and send invoices directly from NurseBill.
+        </p>
+        {gmail?.isConnected ? (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 13, background: "#dcfce7", color: "#166534", borderRadius: 20, padding: "4px 12px", fontWeight: 600 }}>
+                ● Connected · {gmail.gmailUser?.email || "Google Account"}
+              </span>
+              <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={gmail.disconnect}>Disconnect</button>
+            </div>
+            {gmail.gmailError && <p style={{ fontSize: 12, color: "#dc2626", marginTop: 4 }}>{gmail.gmailError}</p>}
+          </div>
+        ) : (
+          <div>
+            <button
+              className="btn btn-primary"
+              onClick={() => gmail?.connect(gmailClientId)}
+              disabled={gmail?.gmailLoading}
+              style={{ marginBottom: 8 }}
+            >
+              {gmail?.gmailLoading ? "Connecting…" : "Connect Gmail"}
+            </button>
+            {gmail?.gmailError && <p style={{ fontSize: 12, color: "#dc2626", marginTop: 6 }}>{gmail.gmailError}</p>}
+            <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
+              Allows NurseBill to search your Gmail for case-related emails and send messages on your behalf.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Google Calendar */}
@@ -2836,8 +3137,33 @@ function IntakeTab({ lawyers, clients, onSave }) {
 }
 
 // ─── Calendar Tab ────────────────────────────────────────────────────────────
-function CalendarTab({ events, clients }) {
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 1, 1)); // Feb 2026
+function CalendarTab({ events, clients, gcal, onAddEvent }) {
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const emptyCalEvent = { title: "", clientId: "", date: new Date().toISOString().split("T")[0], time: "", type: "Meeting", billable: false, duration: "" };
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [calEventForm, setCalEventForm] = useState(emptyCalEvent);
+
+  const saveCalEvent = async () => {
+    if (!calEventForm.title || !calEventForm.date) return;
+    const ev = {
+      id: `ev${Date.now()}`,
+      clientId: calEventForm.clientId || null,
+      title: calEventForm.title,
+      date: calEventForm.date,
+      time: calEventForm.time,
+      type: calEventForm.type,
+      billable: calEventForm.billable,
+      duration: parseFloat(calEventForm.duration) || 0,
+    };
+    onAddEvent(ev);
+    if (gcal?.isConnected && gcal.createCalendarEvent) {
+      const client = clients.find(c => c.id === calEventForm.clientId);
+      const desc = client ? `Client: ${client.name}` : "";
+      gcal.createCalendarEvent({ summary: calEventForm.title, date: calEventForm.date, time: calEventForm.time, description: desc }).catch(console.warn);
+    }
+    setCalEventForm(emptyCalEvent);
+    setShowAddForm(false);
+  };
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -2877,13 +3203,13 @@ function CalendarTab({ events, clients }) {
 
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: showAddForm ? 12 : 20 }}>
         <div className="cal-nav">
           <button className="btn btn-secondary btn-sm" onClick={() => setCurrentDate(new Date(year, month - 1, 1))}>← Prev</button>
           <h3>{monthNames[month]} {year}</h3>
           <button className="btn btn-secondary btn-sm" onClick={() => setCurrentDate(new Date(year, month + 1, 1))}>Next →</button>
         </div>
-        <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-secondary)" }}>
             <Icons.Clock />
             <span><strong>{totalBillableHours}</strong> billable hrs</span>
@@ -2892,8 +3218,61 @@ function CalendarTab({ events, clients }) {
             <Icons.DollarSign />
             <span><strong>{formatCurrency(totalBillableHours * HOURLY_RATE)}</strong> est. revenue</span>
           </div>
+          <button className="btn btn-sm btn-primary" onClick={() => setShowAddForm(!showAddForm)}>
+            {showAddForm ? "Cancel" : "+ Add Event"}
+          </button>
         </div>
       </div>
+
+      {showAddForm && (
+        <div style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: 16, marginBottom: 20 }}>
+          <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 12, color: "var(--accent)" }}>
+            New Event{gcal?.isConnected ? " · will sync to Google Calendar" : ""}
+          </p>
+          <div className="form-grid" style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr" }}>
+            <div className="form-group">
+              <label style={{ fontSize: 11 }}>Title</label>
+              <input value={calEventForm.title} onChange={(e) => setCalEventForm({ ...calEventForm, title: e.target.value })} placeholder="Meeting, court date..." style={{ fontSize: 12 }} />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 11 }}>Date</label>
+              <input type="date" value={calEventForm.date} onChange={(e) => setCalEventForm({ ...calEventForm, date: e.target.value })} style={{ fontSize: 12 }} />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 11 }}>Time (optional)</label>
+              <input type="time" value={calEventForm.time} onChange={(e) => setCalEventForm({ ...calEventForm, time: e.target.value })} style={{ fontSize: 12 }} />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 11 }}>Type</label>
+              <select value={calEventForm.type} onChange={(e) => setCalEventForm({ ...calEventForm, type: e.target.value })} style={{ fontSize: 12 }}>
+                <option>Meeting</option>
+                <option>Testimony</option>
+                <option>Record Review</option>
+                <option>Consultation</option>
+                <option>Court Date</option>
+                <option>Other</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-grid" style={{ gridTemplateColumns: "2fr 1fr 1fr", marginTop: 8 }}>
+            <div className="form-group">
+              <label style={{ fontSize: 11 }}>Case (optional)</label>
+              <select value={calEventForm.clientId} onChange={(e) => setCalEventForm({ ...calEventForm, clientId: e.target.value })} style={{ fontSize: 12 }}>
+                <option value="">— No case —</option>
+                {clients.filter(c => c.status !== "Closed").map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 11 }}>Hours (billable)</label>
+              <input type="number" min="0" step="0.5" value={calEventForm.duration} onChange={(e) => setCalEventForm({ ...calEventForm, duration: e.target.value, billable: parseFloat(e.target.value) > 0 })} placeholder="0" style={{ fontSize: 12 }} />
+            </div>
+            <div className="form-group" style={{ justifyContent: "flex-end", display: "flex", flexDirection: "column" }}>
+              <button className="btn btn-primary btn-sm" onClick={saveCalEvent}>Save Event</button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       <div className="calendar-grid">
         {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
@@ -2965,16 +3344,10 @@ function CalendarTab({ events, clients }) {
 }
 
 // ─── Invoice Tab ─────────────────────────────────────────────────────────────
-// ─── Upload / Hightail Tab ──────────────────────────────────────────────────
+// ─── Upload Tab ──────────────────────────────────────────────────────────────
 function UploadTab({ clients, lawyers }) {
-  const [hightailConnected, setHightailConnected] = useState(false);
-  const [hightailEmail, setHightailEmail] = useState("");
-  const [showConnectModal, setShowConnectModal] = useState(false);
-  const [showSendModal, setShowSendModal] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState("all");
   const [dragOver, setDragOver] = useState(false);
-  const [sendingToHightail, setSendingToHightail] = useState(false);
-  const [sendProgress, setSendProgress] = useState(0);
   const [toast, setToast] = useState(null);
   const [isElectron, setIsElectron] = useState(false);
   const [desktopTree, setDesktopTree] = useState(null);
@@ -3234,34 +3607,6 @@ function UploadTab({ clients, lawyers }) {
     }
   };
 
-  // Hightail functions (same as before)
-  const handleConnect = () => {
-    if (!hightailEmail) return;
-    setHightailConnected(true);
-    setShowConnectModal(false);
-    setToast({ msg: "Connected to Hightail!", type: "success" });
-  };
-
-  const readyFiles = filteredFiles;
-
-  const handleSendToHightail = () => {
-    if (readyFiles.length === 0) return;
-    setSendingToHightail(true);
-    setSendProgress(0);
-    setShowSendModal(false);
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += Math.random() * 15 + 5;
-      if (progress >= 100) {
-        progress = 100;
-        clearInterval(interval);
-        setSendingToHightail(false);
-        setSendProgress(0);
-        setToast({ msg: `${readyFiles.length} file${readyFiles.length !== 1 ? "s" : ""} sent to Hightail!`, type: "success" });
-      }
-      setSendProgress(Math.min(progress, 100));
-    }, 400);
-  };
 
   const formatBytes = (bytes) => {
     if (!bytes || bytes === 0) return "0 B";
@@ -3316,41 +3661,6 @@ function UploadTab({ clients, lawyers }) {
         </div>
       </div>
 
-      {/* Hightail Connection Banner */}
-      <div className="hightail-banner">
-        <div>
-          <h3>☁ Hightail Integration</h3>
-          <p>Your uplink: <strong>spaces.hightail.com/uplink/jgrossman</strong> · Securely send &amp; receive large case files</p>
-        </div>
-        {hightailConnected ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div className="hightail-status connected">
-              <Icons.Check /> Connected as {hightailEmail}
-            </div>
-            <button className="btn btn-sm" style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: "none" }} onClick={() => setHightailConnected(false)}>
-              Disconnect
-            </button>
-          </div>
-        ) : (
-          <button className="btn" style={{ background: "#fff", color: "var(--accent-hover)", fontWeight: 600 }} onClick={() => setShowConnectModal(true)}>
-            Connect to Hightail
-          </button>
-        )}
-      </div>
-
-      {/* Sending progress bar */}
-      {sendingToHightail && (
-        <div className="card" style={{ padding: 20, marginBottom: 20, display: "flex", alignItems: "center", gap: 16 }}>
-          <Icons.Cloud />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Sending files to Hightail...</div>
-            <div className="progress-bar-track" style={{ height: 6 }}>
-              <div className="progress-bar-fill" style={{ width: `${sendProgress}%` }} />
-            </div>
-          </div>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--accent)" }}>{Math.round(sendProgress)}%</span>
-        </div>
-      )}
 
       <div className="upload-layout">
         {/* Folder Tree — mirrors Mac Desktop */}
@@ -3398,11 +3708,6 @@ function UploadTab({ clients, lawyers }) {
               <button className="btn btn-secondary btn-sm" onClick={() => handleOpenInFinder(selectedFolderPath)}>
                 📂 {isElectron ? "Finder" : "Path"}
               </button>
-              {hightailConnected && filteredFiles.length > 0 && (
-                <button className="btn btn-sm" style={{ background: "var(--accent-hover)", color: "#fff", border: "none" }} onClick={() => setShowSendModal(true)}>
-                  <Icons.Cloud /> Send {filteredFiles.length} to Hightail
-                </button>
-              )}
             </div>
           </div>
 
@@ -3419,7 +3724,7 @@ function UploadTab({ clients, lawyers }) {
             <p>
               {isElectron
                 ? `Files will be saved to: ${selectedFolderPath}`
-                : "PDF, DOC, XLS, images, ZIP — up to 10 GB per file via Hightail"}
+                : "PDF, DOC, XLS, images, ZIP"}
             </p>
           </div>
 
@@ -3464,103 +3769,74 @@ function UploadTab({ clients, lawyers }) {
         </div>
       </div>
 
-      {/* Connect to Hightail Modal */}
-      {showConnectModal && (
-        <div className="modal-overlay" onClick={() => setShowConnectModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
-            <div className="modal-header">
-              <h2>Connect to Hightail</h2>
-              <button className="btn btn-ghost" onClick={() => setShowConnectModal(false)}><Icons.X /></button>
-            </div>
-            <div className="modal-body">
-              <div style={{ textAlign: "center", marginBottom: 20 }}>
-                <div style={{ fontSize: 40, marginBottom: 8 }}>☁</div>
-                <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                  Enter your Hightail account email to connect. Files will be sent securely via the Hightail API with tracking and encryption.
-                </p>
-              </div>
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label>Hightail Email</label>
-                <input value={hightailEmail} onChange={(e) => setHightailEmail(e.target.value)} placeholder="you@email.com" />
-              </div>
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label>API Token (from Hightail Admin)</label>
-                <input type="password" placeholder="Enter your Hightail API token" />
-              </div>
-              <div style={{ background: "var(--accent-lighter)", padding: 12, borderRadius: "var(--radius-sm)", fontSize: 12, color: "var(--text-secondary)" }}>
-                Need a token? Go to your <strong>Hightail Admin Console</strong> → API Settings → Generate Token. Available on Teams &amp; Business plans.
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setShowConnectModal(false)}>Cancel</button>
-              <button className="btn" style={{ background: "var(--accent-hover)", color: "#fff", border: "none" }} onClick={handleConnect}>
-                <Icons.Cloud /> Connect
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Send to Hightail Modal */}
-      {showSendModal && (
-        <div className="modal-overlay" onClick={() => setShowSendModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 500 }}>
-            <div className="modal-header">
-              <h2>Send to Hightail</h2>
-              <button className="btn btn-ghost" onClick={() => setShowSendModal(false)}><Icons.X /></button>
-            </div>
-            <div className="modal-body">
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label>Recipient Email(s)</label>
-                <input placeholder="attorney@lawfirm.com" />
-              </div>
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label>Message (optional)</label>
-                <textarea rows={3} placeholder="Please find the attached case files for your review..." />
-              </div>
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label>Security</label>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 400, textTransform: "none", letterSpacing: 0, cursor: "pointer" }}>
-                    <input type="checkbox" defaultChecked style={{ accentColor: "var(--accent)" }} /> Require identity verification
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 400, textTransform: "none", letterSpacing: 0, cursor: "pointer" }}>
-                    <input type="checkbox" style={{ accentColor: "var(--accent)" }} /> Set expiration date
-                  </label>
-                </div>
-              </div>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                  Files to Send ({filteredFiles.length})
-                </label>
-                <div className="send-modal-file-list">
-                  {filteredFiles.map((f, i) => (
-                    <div key={f.path || i} className="send-modal-file-item">
-                      <div className={`file-icon-box ${fileTypeClass(f.extension)}`} style={{ width: 24, height: 24, fontSize: 8, borderRadius: 4 }}>{fileTypeIcon(f.extension)}</div>
-                      <span style={{ flex: 1 }}>{f.name}</span>
-                      <span style={{ color: "var(--text-muted)" }}>{formatBytes(f.size)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setShowSendModal(false)}>Cancel</button>
-              <button className="btn" style={{ background: "var(--accent-hover)", color: "#fff", border: "none" }} onClick={handleSendToHightail}>
-                <Icons.Send /> Send via Hightail
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
     </>
   );
 }
 
+// ─── Invoice PDF Builder ──────────────────────────────────────────────────────
+function buildInvoiceHTML({ invoiceNo, invoiceDate, invoiceDue, lawFirm, attorney, mitigationSpecialist, client, clientIndictment, lineItems, subtotal, proBono, totalDue, userName, userEmail, userPhone, userPaymentAddress }) {
+  const fmt = (n) => `$${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const rows = lineItems.map((li) => `
+    <tr>
+      <td>${li.date || ""}</td>
+      <td>${li.description || ""}</td>
+      <td style="text-align:right">${li.rate || ""}</td>
+      <td style="text-align:right">${li.unit || ""}</td>
+      <td style="text-align:right">${fmt(li.lineTotal)}</td>
+    </tr>`).join("");
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+  <style>
+    body { font-family: 'Book Antiqua', 'Palatino Linotype', Georgia, serif; font-size: 11pt; color: #222; margin: 0; padding: 32px 40px; }
+    h1 { font-size: 18pt; color: #396894; margin: 0 0 4px; }
+    .meta { font-size: 9pt; color: #666; line-height: 1.7; }
+    .divider { border: none; border-top: 2px solid #396894; margin: 14px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 10pt; }
+    th { background: #396894; color: #fff; padding: 6px 8px; text-align: left; }
+    th:last-child, th:nth-child(3), th:nth-child(4) { text-align: right; }
+    td { padding: 5px 8px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
+    .totals { float: right; width: 260px; margin-top: 8px; font-size: 10pt; }
+    .totals td { border: none; padding: 3px 6px; }
+    .total-due { font-weight: bold; font-size: 12pt; color: #396894; }
+    .footer { font-size: 8pt; color: #888; margin-top: 32px; text-align: right; line-height: 1.7; }
+    .disclaimer { font-size: 7pt; color: #aaa; font-style: italic; text-align: center; margin-top: 16px; }
+  </style></head><body>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+    <div>
+      <h1>${userName || "Your Name"}</h1>
+      <div class="meta">${userEmail ? userEmail + "<br>" : ""}${userPhone || ""}</div>
+    </div>
+    <div style="text-align:right;font-size:10pt;line-height:2">
+      <div><strong>Invoice No:</strong> ${invoiceNo}</div>
+      <div><strong>Invoice Due:</strong> ${invoiceDue}</div>
+    </div>
+  </div>
+  <hr class="divider">
+  <div style="margin-bottom:18px;font-size:10pt;line-height:1.8">
+    <div><strong>Date:</strong> ${invoiceDate}</div>
+    <div style="font-weight:bold">${lawFirm}</div>
+    <div><strong>Attorney:</strong> ${attorney}</div>
+    ${mitigationSpecialist ? `<div><strong>Mitigation Specialist:</strong> ${mitigationSpecialist}</div>` : ""}
+    <div><strong>Client:</strong> ${client}${clientIndictment ? ` (${clientIndictment})` : ""}</div>
+  </div>
+  <table>
+    <thead><tr><th>Date</th><th>Description</th><th>Rate</th><th>Unit</th><th>Total</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <table class="totals">
+    <tr><td>Subtotal</td><td style="text-align:right">${fmt(subtotal)}</td></tr>
+    ${proBono ? `<tr><td>Pro Bono Deduction</td><td style="text-align:right">- ${fmt(proBono)}</td></tr>` : ""}
+    <tr class="total-due"><td><strong>Total Due</strong></td><td style="text-align:right"><strong>${fmt(totalDue)}</strong></td></tr>
+  </table>
+  <div style="clear:both"></div>
+  ${userPaymentAddress ? `<div class="footer">Please make payments to:<br><strong>${userName || ""}</strong><br>${userPaymentAddress}</div>` : ""}
+  <div class="disclaimer">* updated Fee Schedule to start 1.1.2024<br>
+  If payment is not received within 30 days, a separate invoice will be generated for unpaid invoices with additional interest of 1.5% of the outstanding balance per month.</div>
+  </body></html>`;
+}
+
 // ─── Invoice Tab ─────────────────────────────────────────────────────────────
-function InvoiceTab({ clients, lawyers, events, emails, preselectedClient, gmail }) {
+function InvoiceTab({ clients, lawyers, events, emails, preselectedClient, gmail, dashboardName, userPhone, userPaymentAddress, userSignature }) {
   const [selectedClientId, setSelectedClientId] = useState(preselectedClient?.id || "");
   const [showPreview, setShowPreview] = useState(!!preselectedClient);
   const [showEmailModal, setShowEmailModal] = useState(false);
@@ -3698,13 +3974,29 @@ function InvoiceTab({ clients, lawyers, events, emails, preselectedClient, gmail
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
             <button className="btn btn-ghost" onClick={() => { setShowPreview(false); setEmailSent(false); }}>← Back</button>
             <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn btn-secondary" onClick={() => {
-                // In Electron, this would call: node generate_invoice.mjs <path> --data <json>
-                const json = JSON.stringify(getExportData());
-                console.log("Export data for .docx generator:", json);
-                alert("In the desktop app, this saves a .docx to your case folder.\n\nExport data logged to console.");
+              <button className="btn btn-secondary" onClick={async () => {
+                if (!window.electronAPI?.savePdf) {
+                  alert("PDF export is only available in the desktop app.");
+                  return;
+                }
+                const data = getExportData();
+                const html = buildInvoiceHTML({
+                  ...data,
+                  userName: dashboardName,
+                  userEmail: gmail?.gmailUser?.email || "",
+                  userPhone,
+                  userPaymentAddress,
+                });
+                try {
+                  const result = await window.electronAPI.savePdf(html, data.invoiceNo, lawyer?.name, clientName);
+                  if (result?.success) {
+                    alert(`Invoice saved to:\n${result.filePath}`);
+                  }
+                } catch (e) {
+                  alert("Failed to save PDF: " + e.message);
+                }
               }}>
-                <Icons.Save /> Export .docx
+                <Icons.Save /> Export PDF
               </button>
               <button className="btn btn-primary" onClick={() => setShowEmailModal(true)}>
                 <Icons.Send /> Email Invoice
@@ -3751,11 +4043,11 @@ function InvoiceTab({ clients, lawyers, events, emails, preselectedClient, gmail
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
               <div>
                 <div style={{ fontSize: 22, fontWeight: 700, color: "#396894", lineHeight: 1.4, marginBottom: 6 }}>
-                  Jennifer Grossman BSN, RN, LNC
+                  {dashboardName || "Your Name"}
                 </div>
                 <div style={{ fontSize: 11, color: "#666", lineHeight: 1.6 }}>
-                  JGrossmanLNC@gmail.com<br />
-                  413.218.5092
+                  {gmail?.gmailUser?.email || ""}{gmail?.gmailUser?.email && userPhone ? <br /> : null}
+                  {userPhone || ""}
                 </div>
               </div>
               <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 4 }}>
@@ -3934,9 +4226,8 @@ function InvoiceTab({ clients, lawyers, events, emails, preselectedClient, gmail
             {/* Footer — payment info */}
             <div style={{ textAlign: "right", fontSize: 10, lineHeight: 1.7, marginTop: 24, color: "var(--text-secondary)" }}>
               Please make payments to:<br />
-              <strong>Jennifer Grossman</strong><br />
-              85 Summit Street #2<br />
-              Brooklyn, NY 11231
+              <strong>{dashboardName || "Your Name"}</strong>
+              {userPaymentAddress ? <><br />{userPaymentAddress}</> : null}
             </div>
 
             <div style={{ textAlign: "center", fontSize: 8, marginTop: 20, color: "var(--text-muted)", fontStyle: "italic", fontFamily: "'Avenir', 'Avenir Book', system-ui, sans-serif" }}>
@@ -3991,7 +4282,7 @@ function InvoiceTab({ clients, lawyers, events, emails, preselectedClient, gmail
                 <div className="modal-body">
                   <div className="form-group" style={{ marginBottom: 14 }}>
                     <label>From</label>
-                    <input value={gmail?.gmailUser?.email || "JGrossmanLNC@gmail.com"} readOnly style={{ color: "var(--text-muted)" }} />
+                    <input value={gmail?.gmailUser?.email || ""} readOnly style={{ color: "var(--text-muted)" }} />
                   </div>
                   <div className="form-group" style={{ marginBottom: 14 }}>
                     <label>To</label>
@@ -4003,11 +4294,13 @@ function InvoiceTab({ clients, lawyers, events, emails, preselectedClient, gmail
                   </div>
                   <div className="form-group" style={{ marginBottom: 14 }}>
                     <label>Message</label>
-                    <textarea id="invoice-email-body" rows={10} defaultValue={`Hello,\n\nI hope this email finds you well. Please find attached invoice ${invoiceNo} and supporting documentation.\n\nBest,\nJennifer\n\n\nJennifer Grossman, RN, BSN, LNC\n\nFILE UPLOAD HERE: https://spaces.hightail.com/uplink/jgrossman\n\nThis email, and any attachments thereto, is intended only for use by the addressee(s) and may contain legally privileged and/or confidential information. If you are not the intended recipient, please do not disclose, distribute or copy this communication.`} />
+                    <textarea id="invoice-email-body" rows={10} defaultValue={[
+                      `Hello,\n\nI hope this email finds you well. Please find attached invoice ${invoiceNo} and supporting documentation.\n\nBest,\n${(dashboardName || "").split(" ")[0] || ""}`,
+                      "\n\nThis email, and any attachments thereto, is intended only for use by the addressee(s) and may contain legally privileged and/or confidential information. If you are not the intended recipient, please do not disclose, distribute or copy this communication.",
+                    ].join("")} />
                   </div>
                   <div style={{ background: "var(--accent-lighter)", padding: 12, borderRadius: "var(--radius-sm)", fontSize: 12, color: "var(--text-secondary)" }}>
-                    <strong>Attachments:</strong> Invoice {invoiceNo} (.docx) {selectedEmails.length > 0 ? `+ ${selectedEmails.length} email evidence screenshot${selectedEmails.length !== 1 ? "s" : ""}` : ""}<br />
-                    <strong>Hightail Uplink:</strong> <a href="https://spaces.hightail.com/uplink/jgrossman" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>spaces.hightail.com/uplink/jgrossman</a>
+                    <strong>Attachments:</strong> Invoice {invoiceNo} (.pdf) {selectedEmails.length > 0 ? `+ ${selectedEmails.length} email evidence screenshot${selectedEmails.length !== 1 ? "s" : ""}` : ""}
                   </div>
                   {!gmail?.isConnected && (
                     <div style={{ marginTop: 10, padding: 10, background: "#fff3e0", borderRadius: "var(--radius-sm)", fontSize: 11, color: "#e65100" }}>
@@ -4023,7 +4316,13 @@ function InvoiceTab({ clients, lawyers, events, emails, preselectedClient, gmail
                     const body = document.getElementById("invoice-email-body")?.value || "";
                     if (gmail?.isConnected) {
                       try {
-                        await gmail.sendEmail({ to, subject, body });
+                        let attachments = [];
+                        if (window.electronAPI?.generatePdfBuffer) {
+                          const html = buildInvoiceHTML({ ...getExportData(), userName: dashboardName, userEmail: gmail?.gmailUser?.email || "", userPhone, userPaymentAddress });
+                          const base64data = await window.electronAPI.generatePdfBuffer(html);
+                          attachments = [{ filename: `Invoice_${invoiceNo}.pdf`, mimeType: "application/pdf", base64data }];
+                        }
+                        await gmail.sendEmail({ to, subject, body, attachments, signature: userSignature || "" });
                         setShowEmailModal(false);
                         setEmailSent(true);
                       } catch (e) { alert("Failed to send: " + e.message); }
@@ -4054,6 +4353,7 @@ function ImportTab({ onImportComplete, importStats, currentClientCount, billingS
   const [error, setError] = useState(null);
   const [clearExisting, setClearExisting] = useState(false);
   const [parsedRows, setParsedRows] = useState([]);
+  const [importDragOver, setImportDragOver] = useState(false);
 
   // Detect which billing source a file belongs to based on filename keywords
   const detectSource = (filename) => {
@@ -4104,6 +4404,26 @@ function ImportTab({ onImportComplete, importStats, currentClientCount, billingS
       })));
     };
     input.click();
+  };
+
+  // Handle files dropped onto the import drop zone
+  const handleImportDrop = async (e) => {
+    e.preventDefault();
+    setImportDragOver(false);
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    const result = [];
+    for (const file of droppedFiles) {
+      // In Electron, File objects from drag events have a .path property
+      const filePath = file.path || null;
+      result.push({
+        name: file.name,
+        path: filePath,
+        file: filePath ? undefined : file,
+        size: file.size,
+        source: detectSource(file.name),
+      });
+    }
+    if (result.length > 0) setFiles(result);
   };
 
   // Parse an Excel file using SheetJS (works in browser)
@@ -4416,10 +4736,16 @@ function ImportTab({ onImportComplete, importStats, currentClientCount, billingS
         </div>
 
         {files.length === 0 ? (
-          <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)", border: "2px dashed var(--border)", borderRadius: "var(--radius)", cursor: "pointer" }} onClick={handlePickFiles}>
+          <div
+            style={{ textAlign: "center", padding: 40, color: "var(--text-muted)", border: `2px dashed ${importDragOver ? "var(--accent)" : "var(--border)"}`, borderRadius: "var(--radius)", cursor: "pointer", background: importDragOver ? "var(--accent-lighter)" : "transparent" }}
+            onClick={handlePickFiles}
+            onDragOver={(e) => { e.preventDefault(); setImportDragOver(true); }}
+            onDragLeave={() => setImportDragOver(false)}
+            onDrop={handleImportDrop}
+          >
             <Icons.File />
             <p style={{ marginTop: 8, fontSize: 13 }}>Click to select your billing spreadsheets (.xlsx)</p>
-            <p style={{ fontSize: 11, marginTop: 4 }}>LAS_BILLING_2021-present.xlsx, FL_BILLING_FLORIDA_2021-present.xlsx, BILLING_INDIVIDUALS_2021-present.xlsx</p>
+            <p style={{ fontSize: 11, marginTop: 4 }}>Supports .xlsx, .xls, and .csv files — or drag and drop them here</p>
           </div>
         ) : (
           <div>
@@ -4623,6 +4949,9 @@ export default function App() {
   const [importStats, setImportStats] = useState(null);
   const [gmailClientId, setGmailClientId] = useState(GMAIL_CLIENT_ID);
   const [dashboardName, setDashboardName] = useState(() => localStorage.getItem("nursebill_name") || "");
+  const [userPhone, setUserPhone] = useState(() => localStorage.getItem("nursebill_phone") || "");
+  const [userPaymentAddress, setUserPaymentAddress] = useState(() => localStorage.getItem("nursebill_payment_address") || "");
+  const [userSignature, setUserSignature] = useState(() => localStorage.getItem("nursebill_email_signature") || "");
   const [syncFolder, setSyncFolder] = useState("");
   const [billingSources, setBillingSources] = useState(() => {
     try {
@@ -4637,9 +4966,9 @@ export default function App() {
   // Load persisted app data on mount (Electron only)
   useEffect(() => {
     async function loadAppData() {
-      if (!window.electronAPI?.loadAppData) return;
+      if (!window.electronAPI?.loadData) return;
       try {
-        const data = await window.electronAPI.loadAppData();
+        const data = await window.electronAPI.loadData();
         if (data) {
           if (data.clients) setClients(data.clients);
           if (data.lawyers) setLawyers(data.lawyers);
@@ -4655,10 +4984,10 @@ export default function App() {
 
   // Save app data whenever state changes (debounced, Electron only)
   useEffect(() => {
-    if (!window.electronAPI?.saveAppData) return;
+    if (!window.electronAPI?.saveData) return;
     const timeoutId = setTimeout(async () => {
       try {
-        await window.electronAPI.saveAppData({ clients, lawyers, emails, events });
+        await window.electronAPI.saveData({ clients, lawyers, emails, events });
       } catch (e) {
         console.warn("Failed to save app data:", e);
       }
@@ -4670,6 +4999,9 @@ export default function App() {
 
   // Persist settings to localStorage
   useEffect(() => { try { localStorage.setItem("nursebill_name", dashboardName); } catch {} }, [dashboardName]);
+  useEffect(() => { try { localStorage.setItem("nursebill_phone", userPhone); } catch {} }, [userPhone]);
+  useEffect(() => { try { localStorage.setItem("nursebill_payment_address", userPaymentAddress); } catch {} }, [userPaymentAddress]);
+  useEffect(() => { try { localStorage.setItem("nursebill_email_signature", userSignature); } catch {} }, [userSignature]);
   useEffect(() => { try { localStorage.setItem("nursebill_billing_sources", JSON.stringify(billingSources)); } catch {} }, [billingSources]);
 
   // ─── Google Calendar two-way poll ─────────────────────────────────────────
@@ -4692,8 +5024,30 @@ export default function App() {
 
   useEffect(() => {
     if (!gcal.isConnected) return;
-    // Poll immediately on connect, then every 5 minutes
+
+    // Bulk push all cases that have a due date but no gcalEventId yet
+    const bulkSync = async () => {
+      const toSync = clients.filter((c) => c.dueDate && !c.gcalEventId);
+      if (toSync.length === 0) return;
+      const updates = await Promise.all(
+        toSync.map(async (c) => {
+          const lawyer = lawyers.find((l) => l.id === c.lawyerId);
+          const eventId = await gcal.syncDueDate(c, lawyer, c.dueDate, null).catch(() => null);
+          return eventId ? { id: c.id, gcalEventId: eventId } : null;
+        })
+      );
+      const valid = updates.filter(Boolean);
+      if (valid.length > 0) {
+        setClients((prev) => prev.map((c) => {
+          const u = valid.find((v) => v.id === c.id);
+          return u ? { ...c, gcalEventId: u.gcalEventId } : c;
+        }));
+      }
+    };
+
+    // Poll immediately on connect, bulk sync unsent cases, then every 5 minutes
     applyCalendarChanges();
+    bulkSync();
     const id = setInterval(applyCalendarChanges, 5 * 60 * 1000);
     // Also poll on window focus (when user switches back from GCal)
     window.addEventListener("focus", applyCalendarChanges);
@@ -4822,7 +5176,7 @@ export default function App() {
     cases: selectedCase ? "Case Detail" : "Case Management",
     intake: "Client Intake",
     calendar: "Calendar & Scheduling",
-    uploads: "File Uploads & Hightail",
+    uploads: "File Uploads",
     invoices: "Invoice Generator",
     import: "Import Billing Data",
     settings: "Settings",
@@ -4936,7 +5290,7 @@ export default function App() {
               <IntakeTab lawyers={lawyers} clients={clients} onSave={handleIntakeSave} />
             )}
             {activeTab === "calendar" && (
-              <CalendarTab events={events} clients={clients} />
+              <CalendarTab events={events} clients={clients} gcal={gcal} onAddEvent={(ev) => setEvents(prev => [...prev, ev])} />
             )}
             {activeTab === "uploads" && (
               <UploadTab clients={clients} lawyers={lawyers} />
@@ -4949,6 +5303,10 @@ export default function App() {
                 emails={emails}
                 preselectedClient={invoiceClient}
                 gmail={gmail}
+                dashboardName={dashboardName}
+                userPhone={userPhone}
+                userPaymentAddress={userPaymentAddress}
+                userSignature={userSignature}
               />
             )}
             {activeTab === "import" && (
@@ -4963,12 +5321,19 @@ export default function App() {
               <SettingsTab
                 dashboardName={dashboardName}
                 setDashboardName={setDashboardName}
+                userPhone={userPhone}
+                setUserPhone={setUserPhone}
+                userPaymentAddress={userPaymentAddress}
+                setUserPaymentAddress={setUserPaymentAddress}
+                userSignature={userSignature}
+                setUserSignature={setUserSignature}
                 clients={clients}
                 lawyers={lawyers}
                 onClearAll={handleClearAll}
                 syncFolder={syncFolder}
                 onChangeSyncFolder={setSyncFolder}
                 gcal={gcal}
+                gmail={gmail}
                 gmailClientId={gmailClientId}
                 billingSources={billingSources}
                 setBillingSources={setBillingSources}

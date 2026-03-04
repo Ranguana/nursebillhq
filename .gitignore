@@ -3,3 +3,5 @@ dist/
 .DS_Store
 *.dmg
 *.blockmap
+.env.local
+.env

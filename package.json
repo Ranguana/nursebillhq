@@ -6,13 +6,19 @@
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:17839 && electron . --dev\"",
     "build": "vite build && electron-builder --mac",
+    "release": "node scripts/release.js",
+    "notarize-check": "xcrun notarytool history --keychain-profile nursebill",
     "test": "vitest",
     "test:run": "vitest run"
   },
   "author": "NurseBill",
   "license": "MIT",
-  "dependencies": {},
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "electron-updater": "^6.8.3"
+  },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@testing-library/jest-dom": "^6.4.2",
     "@testing-library/react": "^14.3.1",
     "@testing-library/user-event": "^14.5.2",
@@ -34,14 +40,57 @@
     "asar": true,
     "mac": {
       "category": "public.app-category.business",
-      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
-      "icon": "public/logo.png"
+      "notarize": false,
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.png"
+    },
+    "dmg": {
+      "background": "build/dmg-background.png",
+      "iconSize": 100,
+      "iconTextSize": 12,
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 140,
+          "y": 200,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Ranguana",
+      "repo": "nursebill"
     },
     "files": [
       "dist/**/*",
       "main.js",
       "preload.js",
-      "package.json"
+      "package.json",
+      ".env.local",
+      "node_modules/dotenv/**/*",
+      "node_modules/electron-updater/**/*",
+      "node_modules/builder-util-runtime/**/*"
     ],
     "extraMetadata": {
       "main": "main.js"

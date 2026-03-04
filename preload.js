@@ -9,7 +9,7 @@
  * wander into the back office (file system) on its own.
  */
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
 
@@ -42,9 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   /** Get the full path from a File object (for drag-and-drop) */
   getPathForFile: (file) => {
-    // In Electron 28+, use webUtils.getPathForFile
-    // For older versions, return file.path if available
-    return file?.path || null;
+    return webUtils.getPathForFile(file);
   },
   
   /** Move a file to a different case folder */
@@ -81,8 +79,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveFile: (defaultName, content, lawyerName, clientName) => 
     ipcRenderer.invoke('fs:save-file', defaultName, content, lawyerName, clientName),
 
+  // ─── Google OAuth2 ───────────────────────────────────────────────────
+
+  /** Start auth-code flow: opens browser, returns { accessToken, refreshToken, expiresAt } */
+  googleAuthCode: (clientId, scopes) => ipcRenderer.invoke('google:auth-code', clientId, scopes),
+
+  /** Exchange a refresh token for a new access token: returns { accessToken, expiresAt } */
+  googleRefreshToken: (clientId, refreshToken) => ipcRenderer.invoke('google:refresh-token', clientId, refreshToken),
+
   // ─── App Info ────────────────────────────────────────────────────────
-  
+
   /** Check if we're running inside Electron (vs. browser) */
   isElectron: () => ipcRenderer.invoke('app:is-electron'),
   
@@ -91,6 +97,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Data Persistence ────────────────────────────────────────────────
   
+  /** Generate a PDF from invoice HTML and return as base64 (for email attachments) */
+  generatePdfBuffer: (html) => ipcRenderer.invoke('generate-pdf-buffer', html),
+
+  /** Generate a PDF from invoice HTML and save to the case folder */
+  savePdf: (html, invoiceNo, lawyerName, clientName) =>
+    ipcRenderer.invoke('invoice:save-pdf', { html, invoiceNo, lawyerName, clientName }),
+
   /** Save app data (clients, lawyers, emails, events) to JSON file */
   saveData: (data) => ipcRenderer.invoke('app:save-data', data),
   
