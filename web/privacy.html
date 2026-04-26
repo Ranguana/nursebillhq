@@ -4,9 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NurseBill — Privacy Policy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #2a2438; line-height: 1.7; padding: 40px 20px; max-width: 680px; margin: 0 auto; }
+    :root {
+      --purple: #8b5cf6;
+      --purple-deep: #6d28d9;
+      --rose: #e879a0;
+      --bg: #faf9fc;
+      --text: #1e1b2e;
+      --text-soft: #64607a;
+      --font-display: 'Playfair Display', Georgia, serif;
+      --font-body: 'DM Sans', -apple-system, sans-serif;
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #2a2438; line-height: 1.7; padding: 40px 20px; max-width: 680px; margin: 0 auto; padding-top: 100px; }
     h1 { font-size: 28px; margin-bottom: 8px; }
     .subtitle { color: #666; font-size: 14px; margin-bottom: 32px; }
     h2 { font-size: 18px; margin: 28px 0 10px; color: #8b5cf6; }
@@ -15,9 +27,67 @@
     li { margin-bottom: 6px; }
     .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e5e5; font-size: 13px; color: #999; }
     a { color: #8b5cf6; }
+
+    /* ─── Top nav (matches index.html) ─── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      padding: 18px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 100;
+      backdrop-filter: blur(16px);
+      background: rgba(250,249,252,0.85);
+      border-bottom: 1px solid rgba(139,92,246,0.08);
+    }
+    .nav-brand {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 20px;
+      color: var(--purple);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .nav-brand .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--rose), var(--purple));
+    }
+    nav a {
+      color: var(--text-soft);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    nav a:hover { color: var(--purple); }
+    nav a.active { color: var(--purple); }
+    .nav-links { display: flex; gap: 28px; align-items: center; }
+
+    @media (max-width: 640px) {
+      nav { padding: 14px 20px; }
+      .nav-links { gap: 16px; }
+      body { padding-top: 90px; }
+    }
   </style>
 </head>
 <body>
+
+  <nav>
+    <a href="index.html" class="nav-brand">
+      <span class="dot"></span>
+      NurseBillHQ
+    </a>
+    <div class="nav-links">
+      <a href="index.html#features">Features</a>
+      <a href="privacy.html" class="active">Privacy</a>
+      <a href="mailto:hello@nursebillhq.com">Contact</a>
+    </div>
+  </nav>
+
   <h1>NurseBill Privacy Policy</h1>
   <p class="subtitle">Last updated: February 18, 2026</p>
 
