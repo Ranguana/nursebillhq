@@ -1,11 +1,12 @@
 {
   "name": "nursebill",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "NurseBill — Expert Billing Dashboard for Criminal Defense Nurse Consultants",
   "main": "main.js",
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:17839 && electron . --dev\"",
     "build": "vite build && electron-builder --mac",
+    "build:mas": "vite build && electron-builder --mac mas --publish=never",
     "release": "node scripts/release.js",
     "notarize-check": "xcrun notarytool history --keychain-profile nursebill",
     "test": "vitest",
@@ -55,6 +56,14 @@
       ],
       "icon": "public/icon.png"
     },
+    "mas": {
+      "category": "public.app-category.business",
+      "entitlements": "build/entitlements.mas.plist",
+      "entitlementsInherit": "build/entitlements.mas.inherit.plist",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "provisioningProfile": "build/embedded.provisionprofile"
+    },
     "dmg": {
       "background": "build/dmg-background.png",
       "iconSize": 100,
@@ -87,10 +96,13 @@
       "main.js",
       "preload.js",
       "package.json",
-      ".env.local",
       "node_modules/dotenv/**/*",
       "node_modules/electron-updater/**/*",
-      "node_modules/builder-util-runtime/**/*"
+      "node_modules/builder-util-runtime/**/*",
+      "!.env*",
+      "!**/.env*",
+      "!.env.local",
+      "!**/.env.local"
     ],
     "extraMetadata": {
       "main": "main.js"

@@ -26,7 +26,7 @@ require('dotenv').config({ path: path.join(__dirname, '.env.local') });
 // → OAuth client ID → Desktop app.  Copy the client_secret below.
 // (For Desktop/Installed apps, the client_secret is embedded by design — this
 //  is standard practice and accepted by Google's OAuth policies.)
-const GOOGLE_CLIENT_SECRET = process.env.NURSEBILL_GOOGLE_SECRET || '';
+const GOOGLE_CLIENT_SECRET = process.env.NURSEBILL_GOOGLE_SECRET || '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';
 
 // ─── Local HTTP server (production only) ─────────────────────────────────────
 // Google OAuth requires an http:// origin — file:// won't work.
